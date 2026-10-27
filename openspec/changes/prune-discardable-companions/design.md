@@ -84,7 +84,7 @@ A dry run doesn't open the database. A real run calls `init_db` and records the 
 
 ### D8. Parsers outside this repository: a brief, not edits
 
-Parsers can live in other repositories, private ones included, so this change edits none of them. [parser-changes.md](parser-changes.md) is a self-contained brief for their maintainers: the contract delta, steps, tests and a compatibility table. A parser that adopts the method returns the same paths its `companions` builds, for example a saved page's `<stem>_files` folder. Its `version` stays the same, because a parser's version marks changes in parsed output and parsing doesn't change. An editable install picks the method up without reinstalling. Until a parser has the method, the prune removes nothing for its files. `docs/parsers.md` records the change in its contract changelog.
+Parsers can live in other repositories, private ones included, so this change edits none of them. [parser-impact.md](parser-impact.md) is a self-contained brief for their maintainers: the contract delta, steps, tests and a compatibility table. A parser that adopts the method returns the same paths its `companions` builds, for example a saved page's `<stem>_files` folder. Its `version` stays the same, because a parser's version marks changes in parsed output and parsing doesn't change. An editable install picks the method up without reinstalling. Until a parser has the method, the prune removes nothing for its files. `docs/parsers.md` records the change in its contract changelog.
 
 ### D9. Tests
 
@@ -106,6 +106,6 @@ Parsers can live in other repositories, private ones included, so this change ed
 ## Migration Plan
 
 1. Revision `0011` adds `inbox_prunes`. `init_db` applies it on the next `import`, `serve` or `inbox prune`.
-2. Hand [parser-changes.md](parser-changes.md) to the maintainer of each out-of-tree parser that names disposable companions (D8). Until a parser adopts `discardable`, prunes run but remove nothing for its files.
+2. Hand [parser-impact.md](parser-impact.md) to the maintainer of each out-of-tree parser that names disposable companions (D8). Until a parser adopts `discardable`, prunes run but remove nothing for its files.
 3. Optionally preview with `jobhunt inbox prune --dry-run`.
 4. Rollback: `alembic downgrade 0010_baseline` drops the table (copy the database first, as for any downgrade). Removed companions can't be restored.

@@ -44,10 +44,10 @@
   - a parser kept in its own repository and installed editable into the same venv (generic, naming no site);
   - testing a parser against jobhunt;
   - when `pip install -e` is needed again (entry points only);
-  - a contract changelog whose first entry is this change ("optional: `discardable(path)`", linking [parser-changes.md](parser-changes.md)).
+  - a contract changelog whose first entry is this change ("optional: `discardable(path)`", linking [parser-impact.md](parser-impact.md)).
 
   Point the README's plug-in paragraph and `docs/architecture.md`'s parser paragraph at it. Verify that every method and rule the brief states appears in the guide or the spec, and that `jobhunt privacy-check --staged` passes.
-- [ ] 6.2 Tell the user the brief is ready to hand to whoever maintains each out-of-tree parser, and give them the path to [parser-changes.md](parser-changes.md). Don't edit any parser repository from this change. Verify by re-reading the brief against the final `parsers/__init__.py` and the spec, and updating it if the implementation moved. Once the user reports the parser updated, `jobhunt inbox prune --dry-run` on their inbox should list asset folders only. Only the totals are reported here, and a real prune is the user's call.
+- [ ] 6.2 Tell the user the brief is ready to hand to whoever maintains each out-of-tree parser, and give them the path to [parser-impact.md](parser-impact.md). Don't edit any parser repository from this change. Verify by re-reading the brief against the final `parsers/__init__.py` and the spec, and updating it if the implementation moved. Once the user reports the parser updated, `jobhunt inbox prune --dry-run` on their inbox should list asset folders only. Only the totals are reported here, and a real prune is the user's call.
 
 ## 7. Docs and checks
 

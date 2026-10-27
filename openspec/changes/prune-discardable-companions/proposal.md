@@ -27,7 +27,7 @@ Not in this change:
 
 ## Parser impact
 
-**Optional.** The parser contract gains an optional `discardable(path)` method, and parsers that don't define it keep working unchanged: the prune removes nothing for their files. A parser that names disposable companions (such as a saved page's asset folder) should adopt it. [parser-changes.md](parser-changes.md) is the brief for parser maintainers, and `docs/parsers.md` gains this change in its contract changelog.
+**Optional.** The parser contract gains an optional `discardable(path)` method, and parsers that don't define it keep working unchanged: the prune removes nothing for their files. A parser that names disposable companions (such as a saved page's asset folder) should adopt it. [parser-impact.md](parser-impact.md) is the brief for parser maintainers, and `docs/parsers.md` gains this change in its contract changelog.
 
 ## Impact
 

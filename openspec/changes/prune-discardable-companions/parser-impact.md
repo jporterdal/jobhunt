@@ -1,4 +1,4 @@
-# Parser changes: prune-discardable-companions
+# Parser impact: prune-discardable-companions
 
 **Impact: optional.** Parsers that don't change keep working. A parser that adopts the new method lets the app delete asset folders it doesn't need.
 

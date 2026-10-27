@@ -1,4 +1,4 @@
-schema: spec-driven
+schema: jobhunt-driven
 
 # Project context (optional)
 # This is shown to AI when creating artifacts.
@@ -22,22 +22,8 @@ schema: spec-driven
 rules:
   proposal:
     - >-
-      Include a "Parser impact" section stating one of: none (the parser contract is unchanged), optional
-      (existing parsers keep working; some may adopt something new), or required (existing parsers break or
-      misbehave until updated). The contract is everything a parser registered under `jobhunt.parsers`
-      implements or relies on: its attributes and methods, their arguments and results, when and on which
-      files they are called, and the posting file format.
-    - >-
-      When parser impact is optional or required, add `parser-changes.md` to the change folder: a brief that
-      a person or agent working only in a parser's own repository can follow without this repository's source.
-      It states the impact, background, the contract delta inline, steps, tests, what not to change (version,
-      entry point), how to check against jobhunt, and a compatibility table. It names no private parser, site
-      or personal value.
-  tasks:
-    - >-
-      When parser impact is optional or required, include tasks to add the change to the contract changelog
-      in `docs/parsers.md`, to re-check `parser-changes.md` against the final code, and to tell the user the
-      brief is ready to hand off. Tasks never edit a parser repository outside this one.
+      Include a one-line "Parser impact" section (none, optional or required) that links parser-impact.md;
+      the decision and any brief for parser maintainers live in that artifact (schema jobhunt-driven).
 
 # Per-operation guidance (optional)
 # Add advisory guidance for how apply and archive work should be conducted.
