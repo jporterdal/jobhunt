@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "macros.html" import company_link, status_badge %}
+{% set doc = d.doc %}
+{% block title %}{{ doc.label }}{% endblock %}
+{% block content %}
+<h1>{{ doc.label }}</h1>
+<p class="row small">
+  <span>{{ doc.kind | replace('_', ' ') }}</span>
+  <span>{{ doc.original_filename }}</span>
+  <span>{{ doc.media_type }}</span>
+  <span>{{ doc.size_bytes | size }}</span>
+  <span>uploaded {{ doc.uploaded_at | dt }}</span>
+  {% if present %}
+  <a href="{{ url_for('applications.download_document', document_id=doc.id) }}">Download</a>
+  {% else %}
+  <strong class="error">File missing</strong>
+  {% endif %}
+</p>
+{% if not present %}
+<p class="error small">The stored file is not in the documents folder. Restore <code>data/documents/</code> from a backup to download it again.</p>
+{% endif %}
+
+<section class="panel src-user">
+  <h2>Linked applications</h2>
+  <ul>
+    {% for app in d.applications %}
+    <li><a href="{{ url_for('applications.application', app_id=app.id) }}">{{ app.title }}</a> — {{ company_link(app.company) }} {{ status_badge(app.status) }}</li>
+    {% else %}
+    <li class="muted small">Not linked to any application. Link it from an application's page.</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="panel src-user" id="profile">
+  <h2>Profile</h2>
+  {% if doc.text_status == "extracted" and doc.text_content %}
+  <form method="post" action="{{ url_for('applications.add_to_profile', document_id=doc.id) }}" class="row small">
+    <button type="submit" {% if llm_unavailable %}disabled title="{{ llm_unavailable }}"{% endif %}>Add to profile</button>
+    {% if llm_unavailable %}<span class="muted">{{ llm_unavailable }}</span>{% endif %}
+    {% set j = d.profile_job %}
+    {% if j %}<span class="muted">Latest extraction: {{ "cancelling" if j.cancelling else j.status }}{% if j.error %} — {{ j.error }}{% endif %}</span>{% endif %}
+  </form>
+  <p class="small muted">The model reads the text and suggests records, skills and highlights for your <a href="{{ url_for('profile.profile_page') }}">profile</a>;
+    nothing is added until you accept it. {% if doc.kind == "cv" %}A CV is read when it is uploaded.{% endif %}</p>
+  {% else %}
+  <p class="small muted">Only a document with extracted text can be added to the profile.</p>
+  {% endif %}
+  {% if d.suggestions %}<p class="small" id="document-suggestions"><a href="{{ url_for('profile.suggestions_page') }}">{{ d.suggestions }} suggestion{{ "s" if d.suggestions != 1 }} to review</a></p>{% endif %}
+</section>
+
+<section class="panel src-user">
+  <h2>Text</h2>
+  {% if doc.text_status == "extracted" %}
+  <div class="extracted-text">{{ doc.text_content }}</div>
+  {% elif doc.text_status == "unsupported" %}
+  <p class="muted">No extracted text: text is only extracted from PDF, DOCX, ODT, TXT and MD files.</p>
+  {% else %}
+  <p class="muted">No extracted text: {{ doc.text_status }}</p>
+  {% endif %}
+</section>
+{% endblock %}

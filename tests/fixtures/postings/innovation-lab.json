@@ -1,0 +1,22 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "careers.example.org",
+  "external_id": "1002",
+  "url": "https://careers.example.org/jobs/1002",
+  "title": "Machine Learning Scientist, Research Lab",
+  "company": "Example Advisory",
+  "location": "Example City, EX",
+  "workplace_type": "Hybrid",
+  "employment_type": "Full-time",
+  "posted_on": "2026-02-20",
+  "posted_precision": "month",
+  "description_html": "<p>Join the research lab.</p><p><strong>Responsibilities</strong></p><ul>\n<li>Responsibility number 1 for the research lab</li>\n<li>Responsibility number 2 for the research lab</li>\n<li>Responsibility number 3 for the research lab</li>\n<li>Responsibility number 4 for the research lab</li>\n<li>Responsibility number 5 for the research lab</li>\n<li>Responsibility number 6 for the research lab</li>\n<li>Responsibility number 7 for the research lab</li>\n<li>Responsibility number 8 for the research lab</li>\n<li>Responsibility number 9 for the research lab</li>\n<li>Responsibility number 10 for the research lab</li>\n<li>Responsibility number 11 for the research lab</li>\n<li>Responsibility number 12 for the research lab</li>\n<li>Responsibility number 13 for the research lab</li>\n<li>Responsibility number 14 for the research lab</li>\n<li>Responsibility number 15 for the research lab</li>\n<li>Responsibility number 16 for the research lab</li>\n<li>Responsibility number 17 for the research lab</li>\n<li>Responsibility number 18 for the research lab</li>\n<li>Responsibility number 19 for the research lab</li>\n<li>Responsibility number 20 for the research lab</li>\n<li>Responsibility number 21 for the research lab</li>\n<li>Responsibility number 22 for the research lab</li>\n<li>Responsibility number 23 for the research lab</li>\n<li>Responsibility number 24 for the research lab</li>\n<li>Responsibility number 25 for the research lab</li>\n<li>Responsibility number 26 for the research lab</li>\n<li>Responsibility number 27 for the research lab</li>\n<li>Responsibility number 28 for the research lab</li>\n<li>Responsibility number 29 for the research lab</li>\n<li>Responsibility number 30 for the research lab</li>\n<li>Responsibility number 31 for the research lab</li>\n<li>Responsibility number 32 for the research lab</li>\n<li>Responsibility number 33 for the research lab</li>\n<li>Responsibility number 34 for the research lab</li>\n<li>Responsibility number 35 for the research lab</li>\n<li>Responsibility number 36 for the research lab</li>\n<li>Responsibility number 37 for the research lab</li>\n<li>Responsibility number 38 for the research lab</li>\n<li>Responsibility number 39 for the research lab</li>\n<li>Responsibility number 40 for the research lab</li>\n<li>Responsibility number 41 for the research lab</li>\n<li>Responsibility number 42 for the research lab</li>\n<li>Responsibility number 43 for the research lab</li>\n<li>Responsibility number 44 for the research lab</li>\n<li>Responsibility number 45 for the research lab</li>\n<li>Responsibility number 46 for the research lab</li>\n<li>Responsibility number 47 for the research lab</li>\n<li>Responsibility number 48 for the research lab</li>\n</ul><p>Équipe bilingue — café inclus.</p>",
+  "details": {
+    "apply_method": "external",
+    "reposted": true
+  },
+  "volatile_details": {
+    "applicants": "58 applicants"
+  }
+}

@@ -1,0 +1,12 @@
+{# The model status badge in the top bar; refreshed by htmx (base.html). Context: status (enrich.ollama.Status). #}
+{%- if status.state == "offline" -%}
+<a class="llm-badge llm-offline" href="{{ url_for('llm.settings_page') }}" title="{{ status.detail or 'Ollama is not reachable' }}">model: offline</a>
+{%- elif status.state == "no_model" -%}
+<a class="llm-badge llm-warn" href="{{ url_for('llm.settings_page') }}">model: none selected</a>
+{%- elif status.state == "missing" -%}
+<a class="llm-badge llm-warn" href="{{ url_for('llm.settings_page') }}">model: {{ status.model }} not installed</a>
+{%- elif status.state == "spill" -%}
+<a class="llm-badge llm-warn" href="{{ url_for('llm.settings_page') }}" title="The model does not fit in GPU memory, so part of it runs on the CPU and extraction is slower.">model: {{ status.model }} · partly on CPU ({{ status.detail }}), slower</a>
+{%- else -%}
+<a class="llm-badge llm-online" href="{{ url_for('llm.settings_page') }}">model: {{ status.model }}</a>
+{%- endif -%}

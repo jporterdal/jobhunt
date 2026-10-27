@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Documents{% endblock %}
+{% block content %}
+<h1>Documents</h1>
+<section class="panel src-user">
+  <h2>Upload</h2>
+  {% with app_id=None %}{% include "applications/_upload_form.html" %}{% endwith %}
+</section>
+{% if docs %}
+<table>
+  <tr><th>Label</th><th>Kind</th><th>File</th><th>Size</th><th>Uploaded</th><th>Text</th><th>Applications</th></tr>
+  {% for doc in docs %}
+  <tr>
+    <td><a href="{{ url_for('applications.document', document_id=doc.id) }}">{{ doc.label }}</a></td>
+    <td>{{ doc.kind | replace('_', ' ') }}</td>
+    <td class="small">{{ doc.original_filename }}</td>
+    <td class="small">{{ doc.size_bytes | size }}</td>
+    <td class="small">{{ doc.uploaded_at | dt }}</td>
+    <td class="small">{{ "yes" if doc.text_status == "extracted" else "no text" }}</td>
+    <td>{{ doc.applications }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No documents yet.</p>
+{% endif %}
+{% endblock %}

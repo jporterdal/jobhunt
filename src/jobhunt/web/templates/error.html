@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Error{% endblock %}
+{% block content %}
+<h1>Something needs fixing</h1>
+<p class="error">{{ message }}</p>
+<p><a href="{{ request.referrer or url_for('postings.index') }}">Go back</a></p>
+{% endblock %}

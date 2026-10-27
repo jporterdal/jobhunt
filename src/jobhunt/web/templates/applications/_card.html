@@ -1,0 +1,13 @@
+{# One application on the board. Context: a (application dict from queries._applications). #}
+{% from "macros.html" import original_link, ext_link, company_link %}
+<div class="card {{ 'is-due' if a.due }}" data-app-id="{{ a.id }}">
+  <a href="{{ url_for('applications.application', app_id=a.id) }}"><strong>{{ a.title }}</strong></a><br>
+  {{ company_link(a.company) }}<br>
+  <span class="small">
+    {% if a.posting_url %}{{ original_link(a.posting_url) }}{% elif a.url %}{{ ext_link(a.url, "Job page ↗") }}{% endif %}
+    {% if a.last_event %}<span class="muted"> · last event {{ a.last_event | d }}</span>{% endif %}
+  </span>
+  {% if a.next_action %}
+  <div class="small {{ 'due' if a.due }}">Next: {{ a.next_action }}{% if a.next_action_due %} ({{ "due " if a.due }}{{ a.next_action_due | d }}){% endif %}</div>
+  {% endif %}
+</div>

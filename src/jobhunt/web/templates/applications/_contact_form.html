@@ -1,0 +1,16 @@
+{# New or edit contact. Context: action, contact (dict or None), companies, company_id (preselected), app_id (link after creating). #}
+<form method="post" action="{{ action }}" class="contact-form">
+  {% if app_id %}<input type="hidden" name="app_id" value="{{ app_id }}">{% endif %}
+  <p><label>Name<br><input type="text" name="name" required value="{{ contact.name if contact else '' }}"></label></p>
+  <p><label>Emails (one per line)<br><textarea name="emails" rows="2">{{ contact.emails | join('\n') if contact else '' }}</textarea></label></p>
+  <p><label>Role<br><input type="text" name="role" value="{{ contact.role or '' if contact else '' }}"></label></p>
+  <p><label>Profile URL<br><input type="url" name="profile_url" size="50" value="{{ contact.profile_url or '' if contact else '' }}"></label></p>
+  {% set selected = contact.company_id if contact else company_id %}
+  <p><label>Company<br>
+    <select name="company_id">
+      <option value="">none</option>
+      {% for co in companies %}<option value="{{ co.id }}" {% if co.id == selected %}selected{% endif %}>{{ co.name }}</option>{% endfor %}
+    </select></label></p>
+  <p><label>Notes<br><textarea name="notes" rows="3">{{ contact.notes or '' if contact else '' }}</textarea></label></p>
+  <button type="submit" class="primary">{{ "Save contact" if contact else "Add contact" }}</button>
+</form>

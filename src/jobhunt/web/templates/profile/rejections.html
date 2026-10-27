@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "profile/_macros.html" import hx %}
+{% block title %}Remembered rejections{% endblock %}
+{% block content %}
+<h1>Remembered rejections</h1>
+<p class="small muted"><a href="{{ url_for('profile.profile_page') }}">← Profile</a> ·
+  Suggestions you rejected, and profile rows you deleted or edited away. Document suggestions with the same identity aren't offered;
+  forget one to let a later suggestion offer it again. Nothing is recreated.</p>
+<section class="panel src-user" id="rejections">
+  <span class="kind-label">yours</span>
+  {% if rejections %}
+  <ul class="small">
+    {% for r in rejections %}
+    <li id="rejection-{{ r.id }}">{{ r.label }} <span class="muted">({{ r.kind | replace("_", " ") }}, {{ r.created_at | dt }})</span>
+      <form class="inline" {{ hx(url_for('profile.forget', rejection_id=r.id)) }}><button type="submit" class="link small">forget</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="small muted">None.</p>
+  {% endif %}
+</section>
+{% endblock %}

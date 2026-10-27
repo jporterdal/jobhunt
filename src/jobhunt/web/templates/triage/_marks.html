@@ -1,0 +1,64 @@
+{# Skills marked in the description, with their importance for the posting and the user's level for each skill.
+   Context: d (posting detail). #}
+{% set complete_at = d.triage.skills_complete_at if d.triage else None %}
+<section class="panel src-user" id="marks-panel">
+  <span class="kind-label">yours</span>
+  <h2 id="marks-heading">Skills asked for ({% if d.marks %}{{ d.marks | length }} marked{% else %}none marked{% endif %}{% if complete_at %} · labelling complete{% endif %})</h2>
+  <p class="small muted">Your marks on this posting: text you selected in the description, or suggestions you accepted. Suggestions you haven't accepted are in “Model says”, below the description, where you can accept or reject them. Importance is for this posting only. Level is your level for the skill under this name wherever it's marked: setting one adds the skill to your profile and clearing it removes it; to change the level of a profile skill a link points to, follow its link under “Have”.</p>
+  <details>
+  <summary>Show marks and options</summary>
+  <div id="marks">
+  {% if not d.marks %}
+  <p class="small muted">Select text in the description to mark a skill.</p>
+  {% endif %}
+  <ul>
+    {% for m in d.marks %}
+    <li>
+      <strong>{{ m.skill_name }}</strong>
+      <form class="inline" method="post" action="{{ url_for('triage.set_importance', job_id=d.posting.job_id, mark_id=m.id) }}"
+            hx-post="{{ url_for('triage.set_importance', job_id=d.posting.job_id, mark_id=m.id) }}" hx-trigger="change"
+            hx-target="#marks" hx-select="#marks" hx-swap="outerHTML"
+            hx-select-oob="#skill-summary,#marks-heading">
+        <select name="importance" aria-label="importance of {{ m.skill_name }} for this posting">
+          <option value="" {% if not m.importance %}selected{% endif %}>importance?</option>
+          {% for imp in ('required', 'preferred') %}<option {% if m.importance == imp %}selected{% endif %}>{{ imp }}</option>{% endfor %}
+        </select>
+        <noscript><button type="submit">Set</button></noscript>
+      </form>
+      <form class="inline" method="post" action="{{ url_for('triage.set_level', skill_id=m.skill_id) }}"
+            hx-post="{{ url_for('triage.set_level', skill_id=m.skill_id) }}" hx-trigger="change"
+            hx-target="#marks" hx-select="#marks" hx-swap="outerHTML"
+            hx-select-oob="#skill-summary,#marks-heading">
+        <input type="hidden" name="next" value="{{ url_for('postings.detail', job_id=d.posting.job_id) }}">
+        <select name="level" aria-label="your level for {{ m.skill_name }}">
+          <option value="" {% if not m.level %}selected{% endif %}>level?</option>
+          {% for lv in skill_levels %}<option {% if m.level == lv %}selected{% endif %}>{{ lv }}</option>{% endfor %}
+        </select>
+        <noscript><button type="submit">Set</button></noscript>
+      </form>
+      <form class="inline" method="post" action="{{ url_for('triage.remove_mark', job_id=d.posting.job_id, mark_id=m.id) }}">
+        <button type="submit" class="link small" title="remove this mark">remove</button>
+      </form>
+      {% if m.origin == "suggestion" %}<span class="small origin" title="accepted from a model suggestion">suggested</span>{% endif %}
+      <div class="small muted">“{{ m.quote }}”
+        {% if not m.found %}<span class="not-found">not found in current description</span>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="{{ url_for('triage.set_labelled', job_id=d.posting.job_id) }}" class="row small labelled"
+        hx-post="{{ url_for('triage.set_labelled', job_id=d.posting.job_id) }}"
+        hx-target="#marks" hx-select="#marks" hx-swap="outerHTML"
+            hx-select-oob="#skill-summary,#marks-heading">
+    {% if complete_at %}
+    <span>Labelling complete since {{ complete_at | dt }}</span>
+    <input type="hidden" name="complete" value="0">
+    <button type="submit" class="link small">clear</button>
+    {% else %}
+    <input type="hidden" name="complete" value="1">
+    <button type="submit" title="Every skill this posting asks for is marked: use it to measure extraction">Labelling complete</button>
+    {% endif %}
+  </form>
+  </div>
+  </details>
+</section>

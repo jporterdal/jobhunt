@@ -1,0 +1,12 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "careers.example.org",
+  "external_id": "1004",
+  "url": "https://careers.example.org/jobs/1004",
+  "title": "Health Economist",
+  "company": "Example Province",
+  "location": "Example City, EX",
+  "employment_type": "Contract",
+  "description_html": "Type of Employment: Temporary<br/>Salary: $2,950.40 - $3,610.00 Bi-Weekly"
+}

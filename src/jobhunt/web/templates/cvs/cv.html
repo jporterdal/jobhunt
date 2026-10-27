@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link, company_link %}
+{% from "cvs/_preview.html" import preview %}
+{% set c = s.cv %}
+{% block title %}CV · {{ s.posting.title }}{% endblock %}
+{% block content %}
+<h1>CV for {{ s.posting.title }}</h1>
+<p class="row">
+  <a href="{{ url_for('postings.detail', job_id=s.posting.job_id) }}">Posting</a>
+  <span>{{ company_link(s.posting.company) }}</span>
+  {{ original_link(s.posting.url) }}
+  <span class="small muted">saved {{ c.created_at | dt }}{% if c.match_score is not none %} · match {{ "%.0f" | format(c.match_score * 100) }}% then{% endif %} · {{ c.method }}</span>
+</p>
+<p class="row">
+  <a class="button primary" href="{{ url_for('cvs.export', cv_id=c.id) }}">Download .odt</a>
+  <a href="{{ url_for('cvs.proposal', job_id=s.posting.job_id) }}">Tailor another</a>
+  <form class="inline" method="post" action="{{ url_for('cvs.delete', cv_id=c.id) }}" onsubmit="return confirm('Delete this CV?')">
+    <button type="submit">Delete this CV</button>
+  </form>
+</p>
+<p class="small muted">A saved CV is a copy: later profile edits don't change it. Open the download in LibreOffice to finish it.
+  If you attach the file you send to an application, upload it with kind “other”: a “cv” upload is read back into your profile.</p>
+
+<div class="grid2">
+  <section class="panel src-user" id="items">
+    <span class="kind-label">yours</span>
+    <h2>Items</h2>
+    <table class="small">
+      {% for i in s["items"] %}
+      {% if i.first %}<tr><th colspan="2">{{ "Header" if i.section == "header" else L.HEADINGS[i.section] }}</th></tr>{% endif %}
+      <tr id="item-{{ i.id }}">
+        <td>{{ i.label }}
+          {% if i.deleted %}<span class="flag">deleted from the profile since</span>{% endif %}
+          {% if i.private_now %}<span class="private">private now</span>{% endif %}</td>
+        <td class="row-controls">
+          {% if not i.first %}<form class="inline" method="post" action="{{ url_for('cvs.move_item', cv_id=c.id, item_id=i.id) }}"><input type="hidden" name="direction" value="up"><button type="submit" class="link" title="move up">↑</button></form>{% endif %}
+          {% if not i.last %}<form class="inline" method="post" action="{{ url_for('cvs.move_item', cv_id=c.id, item_id=i.id) }}"><input type="hidden" name="direction" value="down"><button type="submit" class="link" title="move down">↓</button></form>{% endif %}
+          <form class="inline" method="post" action="{{ url_for('cvs.remove_item', cv_id=c.id, item_id=i.id) }}"><button type="submit" class="link" title="remove from this CV">remove</button></form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td class="muted">This CV has no items left.</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+  <section class="panel" id="preview">
+    <h2>Preview</h2>
+    {{ preview(cv, L) }}
+  </section>
+</div>
+{% endblock %}

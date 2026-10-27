@@ -1,0 +1,18 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "9000000101",
+  "url": "https://jobs.example.com/view/9000000101",
+  "title": "Machine Learning Engineer",
+  "company": "Example Labs",
+  "location": "Example City, EX",
+  "workplace_type": "Hybrid",
+  "employment_type": "Full-time",
+  "posted_on": "2026-09-28",
+  "captured_at": "2026-09-29T14:05:00+00:00",
+  "description_html": "<p><strong>About the role</strong></p><p>Example Labs builds demand forecasts for regional retailers. You will join a team of six that takes models from notebook to production.</p><p><strong>What you&#x27;ll do</strong></p><ul><li>Build and ship machine learning models in Python</li><li>Turn prototypes into reliable data pipelines with Airflow</li><li>Set up experiment tracking and model monitoring with MLflow</li><li>Present results to product leads; stakeholder management matters here</li></ul><p><strong>What you bring</strong></p><ul><li>Three or more years with Python and SQL</li><li>Hands-on work with scikit-learn or PyTorch</li><li>Solid statistical modeling</li><li>Experience with Docker and CI/CD</li></ul><p><strong>Nice to have</strong></p><ul><li>Kubernetes or another container platform</li><li>AWS</li><li>A Master&#x27;s degree in a quantitative field</li></ul><p><strong>Pay and benefits</strong></p><ul><li>Salary: $105,000–$125,000 CAD per year</li><li>Four weeks of vacation and a yearly learning budget</li></ul>",
+  "details": {
+    "apply_method": "company_site"
+  }
+}

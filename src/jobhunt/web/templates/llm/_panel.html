@@ -1,0 +1,149 @@
+{# "Model says": derived suggestions for one posting. Model text is always autoescaped, never |safe.
+   While this posting's job is queued or running, the panel polls itself until the run is stored.
+   Context: job_id, panel (queries.enrichment_panel or None), llm_job, llm_status, llm_unavailable. #}
+{% macro action(url, marks=False) -%}
+method="post" action="{{ url }}" hx-post="{{ url }}" hx-target="#model-says" hx-select="#model-says" hx-swap="outerHTML"
+{%- if marks %} hx-select-oob="#skill-summary,#marks,#marks-heading"{% else %} hx-select-oob="#skill-summary"{% endif %}
+{%- endmacro %}
+{% set reasons = {"not-a-skill": "not a skill", "not-for-me": "not for me"} %}
+{% set active = llm_job and (llm_job.status in ("queued", "running") or llm_job.cancelling) %}
+{% set run = panel.run if panel else None %}
+<section class="panel src-derived" id="model-says"
+  {%- if active %} hx-get="{{ url_for('llm.panel', job_id=job_id) }}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  <span class="kind-label">model</span>
+  <h2>Model says</h2>
+  <div class="row small">
+    <form class="inline" {{ action(url_for('llm.extract', job_id=job_id)) }}>
+      <button type="submit" {% if llm_unavailable or active %}disabled{% endif %}>{{ "Extract again" if panel else "Extract" }}</button>
+    </form>
+    {% if active %}
+    <span class="job-status">{{ "cancelling" if llm_job.cancelling else llm_job.status }}…</span>
+    {% elif llm_unavailable %}
+    <span class="muted">{{ llm_unavailable }}</span>
+    {% endif %}
+    {% if llm_job and llm_job.status == "failed" and not llm_job.enrichment_id %}
+    <span class="error">The last job failed: {{ llm_job.error }}</span>
+    {% endif %}
+  </div>
+
+  {% if not panel %}
+  <p class="small muted">No model output for this posting yet.</p>
+  {% else %}
+  {% if panel.runs | length > 1 %}
+  <form method="get" action="{{ url_for('postings.detail', job_id=job_id) }}" class="row small"
+        hx-get="{{ url_for('llm.panel', job_id=job_id) }}" hx-trigger="change" hx-target="#model-says" hx-swap="outerHTML">
+    <label>Run
+      <select name="run">
+        {% for r in panel.runs %}
+        <option value="{{ r.id }}" {% if r.id == run.id %}selected{% endif %}>{{ r.finished_at | dt }} · {{ r.model }} · {{ r.status }}{% if r.stale %} · older snapshot{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button type="submit">Show</button></noscript>
+  </form>
+  {% endif %}
+  <p class="small muted">{{ run.model }} · <code>{{ run.pipeline }}</code> · {{ run.finished_at | dt }}
+    · {{ "%.1f" | format((run.finished_at - run.started_at).total_seconds()) }} s</p>
+  {% if panel.stale %}
+  <p class="stale small">Made on an older snapshot of this posting, so its suggestions cannot be accepted. Extract again to use the current description.</p>
+  {% endif %}
+
+  {% if run.status == "failed" %}
+  <p class="error">This run failed: {{ run.error }}</p>
+  {% else %}
+  <h3>Salary</h3>
+  {% if panel.salaries %}
+  <ul>
+    {% for s in panel.salaries %}
+    <li>{{ s | salary }}{% if s.location %} · {{ s.location }}{% endif %}
+      <span class="small muted">({{ {"base": "base", "ote": "on-target earnings"}.get(s.basis, "basis unclear") }})</span>
+      <div class="small muted">“{{ s.quote }}”</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="small muted">No salary found.</p>
+  {% endif %}
+
+  {% for importance in ("required", "preferred") %}
+  {% set items = panel.skills[importance] %}
+  <h3>{{ importance | capitalize }} skills</h3>
+  {% if panel.acceptable and items | rejectattr("marked") | list %}
+  <form class="inline small" {{ action(url_for('llm.accept_all', job_id=job_id), marks=True) }}>
+    <input type="hidden" name="run" value="{{ run.id }}">
+    <input type="hidden" name="importance" value="{{ importance }}">
+    <button type="submit">Accept all {{ importance }}</button>
+  </form>
+  {% endif %}
+  <ul class="suggestions">
+    {% for it in items %}
+    <li>
+      <strong>{{ it.name }}</strong> <span class="small muted">{{ it.kind }}</span>
+      {% if it.marked %}
+      <span class="small marked">already marked</span>
+      {% else %}
+        {% if panel.acceptable %}
+        <form class="inline" {{ action(url_for('llm.accept', item_id=it.id), marks=True) }}>
+          <input type="hidden" name="run" value="{{ run.id }}">
+          <button type="submit" class="link small">Accept</button>
+        </form>
+        {% endif %}
+        <form class="inline" {{ action(url_for('llm.reject', job_id=job_id)) }}>
+          <input type="hidden" name="run" value="{{ run.id }}">
+          <input type="hidden" name="skill" value="{{ it.name }}">
+          <button type="submit" name="reason" value="not-a-skill" class="link small">Not a skill</button>
+          <button type="submit" name="reason" value="not-for-me" class="link small">Not for me</button>
+        </form>
+      {% endif %}
+      <div class="small muted">“{{ it.quote }}”</div>
+    </li>
+    {% else %}
+    <li class="small muted">None.</li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+
+  {% if panel.rejected %}
+  <details class="small">
+    <summary>{{ panel.rejected | length }} rejected</summary>
+    <ul>
+      {% for it in panel.rejected %}
+      <li>{{ it.name }} <span class="muted">({{ it.importance }})</span>
+        · <span class="reason">{{ reasons.get(it.reason, "no reason") }}</span>
+        <form class="inline" {{ action(url_for('llm.rejection_reason', job_id=job_id)) }}>
+          <input type="hidden" name="run" value="{{ run.id }}">
+          <input type="hidden" name="skill" value="{{ it.name }}">
+          {% for value, label in reasons.items() if value != it.reason %}
+          <button type="submit" name="reason" value="{{ value }}" class="link small">Make it “{{ label }}”</button>
+          {% endfor %}
+        </form>
+        <form class="inline" {{ action(url_for('llm.unreject', job_id=job_id)) }}>
+          <input type="hidden" name="run" value="{{ run.id }}">
+          <input type="hidden" name="skill" value="{{ it.name }}">
+          <button type="submit" class="link small">Undo</button>
+        </form>
+        <div class="muted">“{{ it.quote }}”</div>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
+  {% set unverified = panel.unverified_skills | length + panel.unverified_salaries | length %}
+  {% if unverified %}
+  <details class="small unverified">
+    <summary>Show {{ unverified }} unverified item{{ "" if unverified == 1 else "s" }}</summary>
+    <p class="muted">Their quotes or amounts were not found in the description, so they cannot be accepted.</p>
+    <ul>
+      {% for s in panel.unverified_salaries %}
+      <li>Salary {{ s | salary }}<div class="muted">“{{ s.quote }}”</div></li>
+      {% endfor %}
+      {% for it in panel.unverified_skills %}
+      <li>{{ it.name }} <span class="muted">({{ it.importance }}, {{ it.kind }})</span><div class="muted">“{{ it.quote }}”</div></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  {% endif %}
+  {% endif %}
+</section>

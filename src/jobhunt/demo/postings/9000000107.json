@@ -1,0 +1,18 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "9000000107",
+  "url": "https://jobs.example.com/view/9000000107",
+  "title": "AI Consultant",
+  "company": "Example Advisory",
+  "location": "Example City, EX",
+  "workplace_type": "Hybrid",
+  "employment_type": "Full-time",
+  "posted_on": "2026-10-07",
+  "captured_at": "2026-10-08T10:15:00+00:00",
+  "description_html": "<p><strong>About the role</strong></p><p>We help mid-size firms decide where AI is worth the effort.</p><p><strong>What you&#x27;ll do</strong></p><ul><li>Scope projects with clients; stakeholder management daily</li><li>Prototype applications of large language models in Python</li><li>Produce client reports; strong technical writing</li></ul><p><strong>What you bring</strong></p><ul><li>Machine learning fundamentals</li><li>Communication with non-technical clients</li></ul><p><strong>Nice to have</strong></p><ul><li>NLP</li><li>Azure</li></ul>",
+  "details": {
+    "apply_method": "company_site"
+  }
+}

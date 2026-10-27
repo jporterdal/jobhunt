@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "macros.html" import company_link, status_badge %}
+{% set c = d.contact %}
+{% block title %}{{ c.name }}{% endblock %}
+{% block content %}
+<h1>{{ c.name }}</h1>
+<section class="panel src-user">
+  {% include "applications/_contact.html" %}
+  {% if c.company_id %}<p class="small"><a href="{{ url_for('applications.company', company_id=c.company_id) }}">Company page</a></p>{% endif %}
+  {% if c.notes %}<div>{{ c.notes | markdown }}</div>{% endif %}
+</section>
+<section class="panel src-user">
+  <h2>Applications</h2>
+  <ul>
+    {% for app in d.applications %}
+    <li><a href="{{ url_for('applications.application', app_id=app.id) }}">{{ app.title }}</a> — {{ company_link(app.company) }} {{ status_badge(app.status) }}</li>
+    {% else %}
+    <li class="muted small">Not linked to any application.</li>
+    {% endfor %}
+  </ul>
+</section>
+<section class="panel src-user">
+  <details>
+    <summary>Edit contact</summary>
+    {% with action=url_for('applications.edit_contact', contact_id=c.id), contact=c, companies=companies, company_id=None, app_id=None %}
+      {% include "applications/_contact_form.html" %}
+    {% endwith %}
+  </details>
+</section>
+{% endblock %}

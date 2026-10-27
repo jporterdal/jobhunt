@@ -1,0 +1,17 @@
+{# Tag chips with remove buttons and an add box. Context: job_id, tags, compact. Suggestions come from #tag-suggestions. #}
+<div class="chips tags" id="tags-{{ job_id }}{{ '-row' if compact }}">
+  {% for t in tags %}
+  <span class="chip">{{ t.name }}
+    <form class="inline" method="post" action="{{ url_for('triage.remove_tag', job_id=job_id, tag_id=t.id) }}"
+          hx-post="{{ url_for('triage.remove_tag', job_id=job_id, tag_id=t.id) }}" hx-target="closest .tags" hx-swap="outerHTML">
+      {% if compact %}<input type="hidden" name="compact" value="1">{% endif %}
+      <button type="submit" title="remove tag {{ t.name }}" aria-label="remove tag {{ t.name }}">×</button>
+    </form>
+  </span>
+  {% endfor %}
+  <form class="inline" method="post" action="{{ url_for('triage.add_tag', job_id=job_id) }}"
+        hx-post="{{ url_for('triage.add_tag', job_id=job_id) }}" hx-target="closest .tags" hx-swap="outerHTML">
+    {% if compact %}<input type="hidden" name="compact" value="1">{% endif %}
+    <input type="text" name="name" list="tag-suggestions" placeholder="+ tag" aria-label="add tag" required>
+  </form>
+</div>

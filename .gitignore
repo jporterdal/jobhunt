@@ -1,0 +1,33 @@
+# Imported files and local data contain personal information
+inbox/
+data*/
+*.bak*
+tests/fixtures/private/
+*:Zone.Identifier
+
+# Databases and documents never belong in the repository
+*.db
+*.sqlite*
+*.odt
+*.docx
+*.doc
+*.pdf
+
+# Loose saved pages at the root
+/*.htm
+/*.html
+
+# Private planning notes, local tool settings and generated demo data
+FUTURE_CHANGE.md
+.claude/settings.local.json
+/demo/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/

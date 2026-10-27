@@ -1,0 +1,16 @@
+{# A posting's saved CVs, newest first, with "Tailor a CV": on the posting's page and on its application's. #}
+<section class="panel src-user" id="cvs">
+  <span class="kind-label">yours</span>
+  <h2>CVs</h2>
+  <p><a class="button" href="{{ url_for('cvs.proposal', job_id=cv_job_id) }}">Tailor a CV</a></p>
+  {% if cv_list %}
+  <ul class="small">
+    {% for row in cv_list %}
+    <li><a href="{{ url_for('cvs.saved', cv_id=row.id) }}">{{ row.created_at | dt }}</a>
+      {% if row.match_score is not none %}<span class="muted">· match {{ "%.0f" | format(row.match_score * 100) }}%</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="small muted">No CV saved for this posting yet.</p>
+  {% endif %}
+</section>

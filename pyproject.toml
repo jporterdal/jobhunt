@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobhunt"
+version = "0.1.0"
+description = "A local-first job search tool: keep annotated job postings, match them against a structured CV with local models, and tailor CVs."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+keywords = ["job search", "cv", "resume", "ollama", "local-first", "flask", "sqlalchemy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Flask",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+]
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "lxml>=5",
+    "sqlalchemy>=2",
+    "flask>=3",
+    "alembic>=1.13",
+    "markdown-it-py>=3",
+    "pypdf>=4",
+    "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+dev = ["pytest>=8", "ruff>=0.6", "pre-commit>=3.7"]
+
+[project.scripts]
+jobhunt = "jobhunt.cli:main"
+
+# Parsers the importer tries on every inbox file (jobhunt.parsers); reinstall after changing this.
+[project.entry-points."jobhunt.parsers"]
+posting-file = "jobhunt.parsers.posting_file:PARSER"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jobhunt = ["migrations/**", "web/templates/**", "web/static/**", "demo/postings/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Frozen dataclasses: a shared default can't be changed by a call.
+extend-immutable-calls = ["jobhunt.queries.ListFilters", "jobhunt.tailor.Choice"]
+
+[tool.ruff.lint.per-file-ignores]
+# Revisions keep the typing style of Alembic's revision template, so new revisions need no hand edits.
+"src/jobhunt/migrations/versions/*" = ["UP007", "UP035"]
+# Fixtures imported from test_links (`db`) are pytest parameters, which F811 reads as redefinitions.
+"tests/test_expand.py" = ["F811"]
+"tests/test_link_eval.py" = ["F811"]
+# Model prompts and ODF markup: rewrapping them would change a step's output or the exported document.
+"src/jobhunt/enrich/skills.py" = ["E501"]
+"src/jobhunt/cvdoc/styles.py" = ["E501"]

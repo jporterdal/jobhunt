@@ -1,0 +1,22 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "A-1003",
+  "url": "https://jobs.example.com/view/A-1003",
+  "title": "senior AI Engineer",
+  "company": "Example Labs",
+  "location": "Example City, EX",
+  "workplace_type": "Hybrid",
+  "employment_type": "Full-time",
+  "posted_on": "2026-09-18",
+  "description_html": "<p><strong>Join us as a Senior AI Engineer</strong></p><p>📍<strong>Location:</strong> Example City, EX — Hybrid</p><p>⏰<strong>Schedule:</strong> 40 hours/week</p><p>💼<strong>Type:</strong> Full-time</p><p><br/></p><p>🔑 Key Responsibilities</p><ul><li>Design scalable AI/ML solutions</li><li>Work with <strong>Python, ReactJS, AWS</strong></li></ul>",
+  "details": {
+    "apply_method": "quick_apply",
+    "company_page": false,
+    "promotion": "Promoted by hirer"
+  },
+  "volatile_details": {
+    "applicants": "22 applicants"
+  }
+}

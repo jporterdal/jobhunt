@@ -1,0 +1,24 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "A-1001",
+  "url": "https://jobs.example.com/view/A-1001",
+  "title": "Analytics Manager, Reporting Automation (Example City)",
+  "company": "Example Bank",
+  "location": "Example City, EX",
+  "workplace_type": "On-site",
+  "employment_type": "Full-time",
+  "posted_on": "2026-09-14",
+  "posted_precision": "day",
+  "description_html": "<strong>Job Description</strong><br/><br/><strong>About the role</strong><br/><br/>This role drives data automation for the bank's retail lending platform.<br/><br/><strong>What will you do?</strong><br/><ul><li>Design AI-driven automation for data lineage</li><li>Work closely with data governance teams</li><li>Prototype with <a href=\"https://example.com/tools\">LangChain</a> and similar tools</li></ul><br/><strong>More details</strong><br/>Employment Type: Full time<br/>Posted Date: 2026-07-23",
+  "details": {
+    "apply_method": "external",
+    "reposted": true,
+    "promotion": "Promoted by hirer"
+  },
+  "volatile_details": {
+    "applicants": "30 applicants",
+    "posted_age": "6 days ago"
+  }
+}

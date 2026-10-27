@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Skills{% endblock %}
+{% block content %}
+<h1>Skills</h1>
+<p class="small muted">Skills you marked in posting descriptions, and the skills in your <a href="{{ url_for('profile.profile_page') }}">profile</a>.
+  Setting a level adds a skill to the profile; “unset” takes it out. “High interest” counts the postings you rated 4 or more for interest.</p>
+{% if skills %}
+<table>
+  <tr><th>Skill</th><th>Your level</th><th>In profile</th><th>Postings</th><th>High interest</th></tr>
+  {% for s in skills %}
+  <tr class="src-user">
+    <td><a href="{{ url_for('postings.index') }}?q={{ s.name | urlencode }}">{{ s.name }}</a></td>
+    <td>
+      <form class="inline" method="post" action="{{ url_for('triage.set_level', skill_id=s.id) }}"
+            hx-post="{{ url_for('triage.set_level', skill_id=s.id) }}" hx-trigger="change" hx-target="main" hx-select="main" hx-swap="outerHTML">
+        <input type="hidden" name="next" value="{{ url_for('triage.skills_page') }}">
+        <select name="level" aria-label="your level for {{ s.name }}">
+          <option value="" {% if not s.level %}selected{% endif %}>unset</option>
+          {% for lv in skill_levels %}<option {% if s.level == lv %}selected{% endif %}>{{ lv }}</option>{% endfor %}
+        </select>
+        <noscript><button type="submit">Set</button></noscript>
+      </form>
+    </td>
+    <td class="in-profile small">{% if s.in_profile %}<a href="{{ url_for('profile.profile_page') }}#skill-{{ s.id }}">in profile</a>{% if s.level_origin == "model" %} <span class="origin">from model</span>{% endif %}{% elif s.alias_of %}<span class="muted">as {{ s.alias_of }}</span>{% else %}<span class="muted">no</span>{% endif %}</td>
+    <td class="postings-count">{{ s.postings }}</td>
+    <td class="high-count">{{ s.high_interest }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No skills yet. Open a posting and select text in its description to mark a skill.</p>
+{% endif %}
+{% endblock %}

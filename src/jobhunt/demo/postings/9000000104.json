@@ -1,0 +1,18 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "9000000104",
+  "url": "https://jobs.example.com/view/9000000104",
+  "title": "Data Engineer",
+  "company": "Example Payments",
+  "location": "Remote",
+  "workplace_type": "Remote",
+  "employment_type": "Full-time",
+  "posted_on": "2026-10-02",
+  "captured_at": "2026-10-03T16:40:00+00:00",
+  "description_html": "<p><strong>About the role</strong></p><p>We move payment data for thousands of small merchants.</p><p><strong>What you&#x27;ll do</strong></p><ul><li>Build batch and streaming data pipelines with Spark and Airflow</li><li>Model warehouse tables with dbt</li><li>Keep our AWS infrastructure tidy</li></ul><p><strong>What you bring</strong></p><ul><li>Python and SQL</li><li>Docker</li><li>Git</li></ul><p><strong>Nice to have</strong></p><ul><li>Kafka</li><li>Terraform</li></ul><p><strong>Pay and benefits</strong></p><ul><li>Salary: $110,000–$130,000 CAD per year</li><li>Four weeks of vacation and a yearly learning budget</li></ul>",
+  "details": {
+    "apply_method": "quick_apply"
+  }
+}

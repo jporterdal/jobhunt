@@ -1,0 +1,39 @@
+{# Which of a posting's skills the user has, from the match score's credits. Rendered in the page and as an
+   out-of-band refresh by the actions that change the posting's skills. Context: summary (recommend.posting_summary). #}
+{% macro name_link(id, name) %}<a href="{{ url_for('profile.profile_page') }}#skill-{{ id }}">{{ name }}</a>{% endmacro %}
+{% macro groups(list) %}
+{% for g in list %}
+<h4>{{ {"required": "Required", "preferred": "Preferred"}.get(g.importance, "Importance not set") }}</h4>
+<ul class="inline-list">
+  {% for e in g.entries %}
+  <li class="{{ 'src-user' if e.source == 'mark' else 'src-derived' }}">
+    {%- if e.reason is defined -%}
+      {{ e.name }} —
+      {% if e.reason == "missing" %}missing: {{ name_link(e.skill_id, e.skill_name) }}
+      {% elif e.reason == "not-judged" %}not judged yet
+      {% else %}no link{% endif %}
+    {%- elif e.same -%}
+      {{ name_link(e.skill_id, e.skill_name) }} <span class="small muted">(same, {{ e.level }})</span>
+    {%- else -%}
+      {{ e.name }} → {{ name_link(e.skill_id, e.skill_name) }} <span class="small muted">({{ e.relation }}, {{ e.level }})</span>
+    {%- endif -%}
+  </li>
+  {% endfor %}
+</ul>
+{% endfor %}
+{% endmacro %}
+<section class="panel" id="skill-summary"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <h2>Skill match</h2>
+  {% if summary.score.score is none %}
+  <p class="small muted">This posting has no skills yet: mark some in the description or extract them with the model.</p>
+  {% elif not summary.has_profile_skills %}
+  <p class="small muted">Your profile has no skills yet, so nothing here matches. <a href="{{ url_for('profile.profile_page') }}">Add skills to your profile.</a></p>
+  {% else %}
+  <p><strong>{{ (summary.score.score * 100) | round | int }}%</strong>
+    <span class="small muted">· {{ summary.score.unlinked }} of {{ summary.score.skills }} skill{{ "" if summary.score.skills == 1 else "s" }} without a link</span></p>
+  <div class="grid2 summary-lists">
+    <div><h3>Have ({{ summary.have_count }})</h3>{{ groups(summary.have) }}</div>
+    <div><h3>Don't have ({{ summary.dont_have_count }})</h3>{{ groups(summary.dont_have) }}</div>
+  </div>
+  {% endif %}
+</section>

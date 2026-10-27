@@ -1,0 +1,23 @@
+{# Shared bits. Every posting shown anywhere links to its original page in a new tab. #}
+
+{% macro original_link(url, label="Original posting ↗") -%}
+<a class="original-link" href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ label }}</a>
+{%- endmacro %}
+
+{# A user-entered URL: a link only for http, https and mailto; anything else stays plain text. #}
+{% macro ext_link(url, label=None) -%}
+{%- set href = url | safe_url -%}
+{%- if href -%}
+<a href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ label or url }}</a>
+{%- elif url -%}
+<span class="unsafe-url">{{ label or url }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro company_link(name) -%}
+<a href="{{ url_for('applications.company_lookup', name=name) }}">{{ name }}</a>
+{%- endmacro %}
+
+{% macro status_badge(status) -%}
+{%- if status %}<span class="status status-{{ status }}">{{ status }}</span>{% endif -%}
+{%- endmacro %}

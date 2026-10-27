@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<section class="panel src-user">
+  <span class="kind-label">yours</span>
+  <h2>Model</h2>
+  <p class="small">Ollama address: <code>{{ ollama_url or "not configured" }}</code>
+    <span class="muted">(set with <code>jobhunt serve --ollama-url</code> or <code>$JOBHUNT_OLLAMA_URL</code>)</span></p>
+  <form method="post" action="{{ url_for('llm.save_settings') }}" class="settings">
+    <label>Model
+      {% if offline %}
+      <span>{{ settings['llm.model'] or "none selected" }}</span>
+      <span class="small error">Ollama is offline, so the list of installed models is unavailable.</span>
+      {% elif models %}
+      <select name="model">
+        {% if settings['llm.model'] not in models %}<option value="" disabled selected>{{ "choose a model" if not settings['llm.model'] else settings['llm.model'] ~ " (not installed)" }}</option>{% endif %}
+        {% for m in models %}<option {% if m == settings['llm.model'] %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <span class="small muted">No text models are installed. Pull one with <code>ollama pull</code>.</span>
+      {% endif %}
+    </label>
+    <label>Embedding model
+      {% if offline %}
+      <span>{{ settings['llm.embed_model'] or "none selected" }}</span>
+      {% elif embed_models %}
+      <select name="embed_model">
+        {% if not embed_model %}<option value="" disabled selected>{{ settings['llm.embed_model'] ~ " (not installed)" if settings['llm.embed_model'] else "choose a model" }}</option>{% endif %}
+        {% for m in embed_models %}<option {% if m == embed_model %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <span class="small muted">No embedding models are installed. Pull one with <code>ollama pull nomic-embed-text</code>; link judging waits until then.</span>
+      {% endif %}
+    </label>
+    <label>Context size (tokens)
+      <input type="number" name="num_ctx" value="{{ settings['llm.num_ctx'] }}" min="{{ num_ctx_range[0] }}" max="{{ num_ctx_range[1] }}" step="1024" required>
+    </label>
+    <label>Segmentation
+      <select name="segmenter">
+        {% for name in segmenters %}<option {% if name == settings['llm.segmenter'] %}selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="primary">Save</button>
+  </form>
+  <p class="small muted">“llm-lines” asks the model to label each line of a description; “rules” reads its headings and needs no model.
+    Skills are extracted with <code>{{ skills_method }}</code>, the method the code names; it is not a setting.
+    The embedding model shortlists which of your profile skills each posting skill might match; the model above then judges the link.</p>
+</section>
+<section class="panel src-user" id="held-out">
+  <span class="kind-label">yours</span>
+  <h2>Evaluation</h2>
+  {% if labelled.start %}
+  <p>Held-out set started {{ labelled.start|dt }}. Labelled postings: {{ labelled.development }} development, {{ labelled.held_out }} held-out.</p>
+  <form method="post" action="{{ url_for('llm.save_holdout') }}">
+    <button type="submit" name="action" value="clear">Clear the held-out start</button>
+  </form>
+  {% else %}
+  <p>No held-out set: all {{ labelled.development }} labelled postings are development postings.</p>
+  <form method="post" action="{{ url_for('llm.save_holdout') }}">
+    <button type="submit" name="action" value="start">Start a held-out set now</button>
+  </form>
+  {% endif %}
+  <p class="small muted"><code>jobhunt eval</code> reports postings first flagged “Labelling complete” after the start apart from the others.
+    Prompts tuned on the development postings flatter themselves there; the held-out postings show how a method does on postings nobody tuned it for.
+    Start one before labelling new postings.</p>
+</section>
+{% endblock %}

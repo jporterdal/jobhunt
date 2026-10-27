@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% from "profile/_macros.html" import hx %}
+{% block title %}Skill links{% endblock %}
+{% block content %}
+<h1>Skill links</h1>
+<p class="small muted"><a href="{{ url_for('profile.profile_page') }}">← Profile</a> ·
+  Each skill postings ask for, linked to the profile skill that covers it. A model link counts as soon as it is judged; yours always win and are never judged again.
+  Most-asked first, so the links that matter most are at the top.</p>
+{% if notice %}<p class="error small" id="links-notice">{{ notice }}</p>{% endif %}
+<p class="small" id="stale-count">{% if stale %}{{ stale }} of your links {{ "is" if stale == 1 else "are" }} stale (their profile skill left the profile), so {{ "it is" if stale == 1 else "they are" }} ignored.{% else %}None of your links is stale.{% endif %}</p>
+<form {{ hx(url_for('profile.rejudge')) }} class="row small">
+  <button type="submit" {% if llm_unavailable %}disabled title="{{ llm_unavailable }}"{% endif %}>Re-judge all</button>
+  <span class="muted">every posting skill without your own link, for example after changing the model</span>
+</form>
+
+{% if rows %}
+<table class="links">
+  <tr><th>Posting skill</th><th>Postings</th><th>Link</th><th>Source</th><th>Your link</th></tr>
+  {% for r in rows %}
+  {% set l = r.link %}
+  <tr id="link-{{ loop.index }}" class="{{ 'src-user' if l.source == 'user' else ('src-derived' if l.source == 'model' else '') }}">
+    <td>{{ r.name }}</td>
+    <td class="postings-count">{{ r.postings }}</td>
+    <td>{% if l.skill_name %}<strong>{{ l.skill_name }}</strong> <span class="small muted">{{ l.relation }}</span>{% else %}<span class="muted">no link</span>{% endif %}
+      {% if l.stale_override %}<div class="small error">Your link to {{ l.stale_override }} is stale: that skill left the profile.</div>{% endif %}</td>
+    <td class="small">{{ {"user": "yours", "same": "same name", "model": "model"}.get(l.source, "") }}</td>
+    <td class="small">
+      <form class="inline" {{ hx(url_for('profile.override')) }}>
+        <input type="hidden" name="posting_skill" value="{{ r.key }}">
+        <select name="skill" aria-label="profile skill for {{ r.name }}">
+          <option value="none">no link</option>
+          {% for s in skills %}<option value="{{ s.id }}" {% if s.id == l.skill_id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+        </select>
+        <select name="relation" aria-label="relation">
+          {% for rel in relations %}<option {% if rel == (l.relation or 'same') %}selected{% endif %}>{{ rel }}</option>{% endfor %}
+        </select>
+        <button type="submit">Set</button>
+      </form>
+      {% if l.source == "user" or l.stale_override %}
+      <form class="inline" {{ hx(url_for('profile.clear_override')) }}>
+        <input type="hidden" name="posting_skill" value="{{ r.key }}">
+        <button type="submit" class="link small">clear</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No posting skills yet: mark skills on postings, or extract them with the model.</p>
+{% endif %}
+{% endblock %}

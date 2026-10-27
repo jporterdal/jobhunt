@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link, ext_link, company_link, status_badge %}
+{% set app = a.app %}
+{% block title %}{{ app.title }}{% endblock %}
+{% block content %}
+<h1>{{ app.title }}</h1>
+<p class="row">
+  <span>{{ company_link(app.company) }}</span>
+  {{ status_badge(app.status) }}{% if app.status_date %}<span class="small muted">since {{ app.status_date | d }}</span>{% endif %}
+  {% if a.posting %}
+    <a href="{{ url_for('postings.detail', job_id=a.posting.job_id) }}">Posting</a> {{ original_link(a.posting.url) }}
+  {% elif app.url %}
+    {{ ext_link(app.url, "Job page ↗") }}
+  {% endif %}
+</p>
+
+<div class="grid2">
+  <div>
+    <section class="panel src-user" id="next-action">
+      <span class="kind-label">yours</span>
+      <h2>Next action</h2>
+      {% if app.next_action %}
+      <p class="{{ 'due' if app.due }}">{{ app.next_action }}{% if app.next_action_due %} — {{ "due " if app.due }}{{ app.next_action_due | d }}{% endif %}</p>
+      {% endif %}
+      <form method="post" action="{{ url_for('applications.next_action', app_id=app.id) }}" class="row">
+        <input type="text" name="next_action" value="{{ app.next_action or '' }}" placeholder="e.g. Follow up with recruiter" size="34" aria-label="next action">
+        <input type="date" name="next_action_due" value="{{ app.next_action_due | d }}" aria-label="due date">
+        <button type="submit">Save</button>
+      </form>
+    </section>
+
+    <section class="panel src-user" id="events">
+      <span class="kind-label">yours</span>
+      <h2>History</h2>
+      {% if a.events %}
+      <table class="small">
+        {% for e in a.events %}
+        <tr>
+          <td>{{ e.event_date | d }}</td>
+          <td>{{ status_badge(e.kind) if e.kind != 'note' else 'note' }}</td>
+          <td>{{ e.note or "" }}</td>
+          <td>
+            <form method="post" action="{{ url_for('applications.delete_event', app_id=app.id, event_id=e.id) }}">
+              <button type="submit" class="link small" title="delete this event">delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <p class="small muted">No events yet; the status is “interested” until you add one.</p>
+      {% endif %}
+      <form method="post" action="{{ url_for('applications.add_event', app_id=app.id) }}" class="row">
+        <input type="date" name="event_date" value="{{ today.isoformat() }}" aria-label="event date">
+        <select name="kind" aria-label="event kind">
+          {% for k in event_kinds %}<option {% if k == 'applied' %}selected{% endif %}>{{ k }}</option>{% endfor %}
+        </select>
+        <input type="text" name="note" placeholder="note (optional)" size="30" aria-label="note">
+        <button type="submit" class="primary">Add event</button>
+      </form>
+    </section>
+
+    <section class="panel src-user" id="documents">
+      <span class="kind-label">yours</span>
+      <h2>Documents</h2>
+      <ul>
+        {% for doc in a.documents %}
+        <li>
+          <a href="{{ url_for('applications.document', document_id=doc.id) }}">{{ doc.label }}</a>
+          <span class="small muted">{{ doc.kind }} · {{ doc.original_filename }}</span>
+          <form class="inline" method="post" action="{{ url_for('applications.unlink_document', app_id=app.id, document_id=doc.id) }}">
+            <button type="submit" class="link small">unlink</button>
+          </form>
+        </li>
+        {% else %}
+        <li class="muted small">No documents linked.</li>
+        {% endfor %}
+      </ul>
+      {% set linked_ids = a.documents | map(attribute='id') | list %}
+      {% set unlinked = a.all_documents | rejectattr('id', 'in', linked_ids) | list %}
+      {% if unlinked %}
+      <form method="post" action="{{ url_for('applications.link_document', app_id=app.id) }}" class="row small">
+        <select name="document_id" aria-label="document to link">
+          {% for doc in unlinked %}<option value="{{ doc.id }}">{{ doc.label }} ({{ doc.kind }})</option>{% endfor %}
+        </select>
+        <button type="submit">Link document</button>
+      </form>
+      {% endif %}
+      <details class="small">
+        <summary>Upload a new document</summary>
+        {% with app_id=app.id %}{% include "applications/_upload_form.html" %}{% endwith %}
+      </details>
+    </section>
+  </div>
+
+  <div>
+    {% if cv_job_id %}{% include "cvs/_list.html" %}{% endif %}
+
+    <section class="panel src-user" id="contacts">
+      <span class="kind-label">yours</span>
+      <h2>Contacts</h2>
+      {% for c in a.contacts %}
+        {% include "applications/_contact.html" %}
+        <form method="post" action="{{ url_for('applications.unlink_contact', app_id=app.id, contact_id=c.id) }}">
+          <button type="submit" class="link small">unlink</button>
+        </form>
+      {% else %}
+        <p class="muted small">No contacts linked.</p>
+      {% endfor %}
+      {% set linked_contacts = a.contacts | map(attribute='id') | list %}
+      {% set other_contacts = a.all_contacts | rejectattr('id', 'in', linked_contacts) | list %}
+      {% if other_contacts %}
+      <form method="post" action="{{ url_for('applications.link_contact', app_id=app.id) }}" class="row small">
+        <select name="contact_id" aria-label="contact to link">
+          {% for c in other_contacts %}<option value="{{ c.id }}">{{ c.name }}{% if c.company_name %} ({{ c.company_name }}){% endif %}</option>{% endfor %}
+        </select>
+        <button type="submit">Link contact</button>
+      </form>
+      {% endif %}
+      <details class="small">
+        <summary>Add a new contact</summary>
+        {% with action=url_for('applications.create_contact'), contact=None, companies=companies, company_id=company_id, app_id=app.id %}
+          {% include "applications/_contact_form.html" %}
+        {% endwith %}
+      </details>
+    </section>
+
+    <section class="panel src-user" id="details">
+      <span class="kind-label">yours</span>
+      <h2>Details</h2>
+      {% if app.compensation_notes %}<p><strong>Compensation:</strong> {{ app.compensation_notes }}</p>{% endif %}
+      <details>
+        <summary class="small">Edit</summary>
+        <form method="post" action="{{ url_for('applications.edit_application', app_id=app.id) }}">
+          <p><label>Job title<br><input type="text" name="title" value="{{ app.title }}" required size="40"></label></p>
+          <p><label>Company<br><input type="text" name="company" value="{{ app.company }}" required size="40"></label></p>
+          <p><label>Job page URL<br><input type="url" name="url" value="{{ app.url or '' }}" size="50"></label></p>
+          <p><label>Compensation notes<br><textarea name="compensation_notes" rows="3">{{ app.compensation_notes or '' }}</textarea></label></p>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+    </section>
+  </div>
+</div>
+{% endblock %}

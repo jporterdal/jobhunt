@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link, ext_link %}
+{% block title %}Applications{% endblock %}
+{% block content %}
+<div class="row">
+  <h1>Applications</h1>
+  <a href="{{ url_for('applications.new_application') }}">+ Manual application</a>
+  <a href="{{ url_for('applications.documents_page') }}">Documents</a>
+</div>
+
+{% if board.next_actions %}
+<section class="panel src-user" id="next-actions">
+  <h2>Next actions</h2>
+  <ul>
+    {% for a in board.next_actions %}
+    <li class="{{ 'due' if a.due }}">
+      {{ a.next_action_due | d or "no date" }} — {{ a.next_action }}
+      · <a href="{{ url_for('applications.application', app_id=a.id) }}">{{ a.title }}</a>, {{ a.company }}
+      {% if a.due %}<span class="due">due</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if not board.count %}
+<p class="muted">No applications yet. Start one from a posting's page, or add a manual application for a job found elsewhere.</p>
+{% endif %}
+
+<div class="board" id="open-statuses">
+  {% for status, apps in board.open %}
+  <section class="column" data-status="{{ status }}">
+    <h3>{{ status }} <span class="muted small">{{ apps | length }}</span></h3>
+    {% for a in apps %}{% include "applications/_card.html" %}{% endfor %}
+  </section>
+  {% endfor %}
+</div>
+
+<details id="closed-statuses">
+  <summary>Closed ({{ board.closed_count }})</summary>
+  <div class="board">
+    {% for status, apps in board.closed %}
+    <section class="column" data-status="{{ status }}">
+      <h3>{{ status }} <span class="muted small">{{ apps | length }}</span></h3>
+      {% for a in apps %}{% include "applications/_card.html" %}{% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+</details>
+{% endblock %}

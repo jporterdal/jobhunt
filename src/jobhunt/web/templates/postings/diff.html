@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link %}
+{% block title %}Changes · {{ d.latest.title }}{% endblock %}
+{% block content %}
+<h1>Changes to “{{ d.latest.title }}”</h1>
+<p class="row">
+  <a href="{{ url_for('postings.detail', job_id=d.posting.job_id) }}">← back to the posting</a>
+  {{ original_link(d.posting.url) }}
+</p>
+<p class="small muted">From the capture of {{ diff.old.captured_at | dt }} to the capture of {{ diff.new.captured_at | dt }}.</p>
+
+<h2>Fields</h2>
+{% if diff.fields %}
+<table class="small">
+  <tr><th>Field</th><th>Before</th><th>After</th></tr>
+  {% for name, before, after in diff.fields %}
+  <tr><td>{{ name }}</td><td>{{ before | detail_value }}</td><td>{{ after | detail_value }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="small muted">No field changed.</p>
+{% endif %}
+
+<h2>Description</h2>
+<div class="diff">
+  {%- for op, line in diff.lines -%}
+  <div class="{{ op }}">{{ {'delete': '− ', 'insert': '+ ', 'equal': '  '}[op] }}{{ line }}</div>
+  {%- endfor -%}
+</div>
+{% endblock %}

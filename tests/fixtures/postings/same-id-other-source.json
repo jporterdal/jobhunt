@@ -1,0 +1,12 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "careers.example.org",
+  "external_id": "A-1001",
+  "url": "https://careers.example.org/jobs/A-1001",
+  "title": "Data Analyst",
+  "company": "Example Retail",
+  "location": "Remote, Canada",
+  "workplace_type": "Remote",
+  "description_html": "<p>Analyse sales data with SQL and Python.</p><ul><li>Weekly reports 📊</li><li>Dashboards ✨</li></ul>"
+}

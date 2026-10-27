@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "macros.html" import ext_link %}
+{% from "profile/_macros.html" import hx, dates %}
+{% block title %}Profile suggestions{% endblock %}
+
+{% macro actions(o, kind) %}
+<span class="row-controls small">
+  <form class="inline" {{ hx(url_for('profile.accept_suggestion', suggestion_id=o.id)) }}><button type="submit">Accept</button></form>
+  <form class="inline" {{ hx(url_for('profile.reject_suggestion', suggestion_id=o.id)) }}><input type="hidden" name="kind" value="{{ kind }}"><button type="submit" class="link small">reject</button></form>
+</span>
+{% endmacro %}
+
+{% macro about(o) %}
+<span class="small muted">{{ "new" if o.status == "new" else "adds to yours" }} · {{ o.documents | join(", ") }}</span>
+{% endmacro %}
+
+{% block content %}
+<h1>Profile suggestions</h1>
+<p class="small muted"><a href="{{ url_for('profile.profile_page') }}">← Profile</a> ·
+  What extracting your documents suggests, matched against your profile as it is now. Nothing reaches the profile until you accept it;
+  a rejection is remembered, so no run suggests it again.
+  Accept records first: grounds on a record wait until the record is in the profile.</p>
+{% if accepted is not none %}<p class="small accepted" id="accepted">Accepted {{ accepted }} {{ accepted_kind | replace("_", " ") }} suggestion{{ "s" if accepted != 1 }}.</p>{% endif %}
+
+{% if not s.count %}
+<p class="muted" id="nothing">Nothing to review: every suggestion has been accepted or rejected.</p>
+{% else %}
+{% set titles = {"record": "Records", "claim": "Skills", "part_of": "Context links", "highlight": "Highlights"} %}
+{% for kind in kinds %}
+{% set group = s[kind] %}
+<section class="panel src-derived" id="group-{{ kind }}">
+  <span class="kind-label">model</span>
+  <h2>{{ titles[kind] }} <span class="small muted">({{ group | length }})</span></h2>
+  {% if group %}
+  <form {{ hx(url_for('profile.accept_all')) }} class="row small"><input type="hidden" name="kind" value="{{ kind }}">
+    <button type="submit">Accept all ({{ group | length }})</button></form>
+  {% endif %}
+  {% if kind == "part_of" and group %}<p class="small muted guideline">A record is part of another when {{ guideline }}.</p>{% endif %}
+  <ul class="profile-items suggestions">
+    {% for o in group %}
+    <li id="suggestion-{{ o.id }}">
+      {% if kind == "record" %}
+        <strong>{{ o.record.title or "" }}</strong>{% if o.record.title and o.record.organisation %} — {% endif %}{{ o.record.organisation or "" }}
+        <span class="muted small">{{ o.record.kind }}{% if o.record.start_date or o.record.end_date or o.record.ongoing %} · {{ dates(o.record.start_date, o.record.end_date, o.record.ongoing) }}{% endif %}</span>
+        {{ about(o) }} {{ actions(o, kind) }}
+        {% if o.lines or o.sources %}<ul class="small">
+          {% for l in o.lines %}<li>{{ l.text }}</li>{% endfor %}
+          {% for src in o.sources %}<li><span class="muted">{{ src.kind }}:</span> {{ ext_link(src.url) }}</li>{% endfor %}
+        </ul>{% endif %}
+      {% elif kind == "claim" %}
+        <strong>{{ o.name }}</strong>{% if o.suggested_name | lower != o.name | lower %} <span class="small muted">(as {{ o.suggested_name }})</span>{% endif %}
+        {% if o.level %}<span class="small">{% if o.current_level %}{{ o.current_level }} → {% endif %}{{ o.level }}</span>{% endif %}
+        {{ about(o) }} {{ actions(o, kind) }}
+        {% if o.grounds %}<ul class="small">{% for g in o.grounds %}<li>grounded by {{ g.label }} <span class="muted">“{{ g.quote }}”</span></li>{% endfor %}</ul>{% endif %}
+        {% if o.waiting %}<div class="small muted waiting">{{ o.waiting }} ground{{ "s" if o.waiting != 1 }} waiting for records</div>{% endif %}
+      {% elif kind == "part_of" %}
+        {{ o.record_label }} <span class="muted">is part of</span> {{ o.part_of_label }}
+        {{ about(o) }} {{ actions(o, kind) }}
+      {% else %}
+        “{{ o.text }}”
+        {{ about(o) }} {{ actions(o, kind) }}
+        {% if o.covers %}<div class="small">Covers: {{ o.covers | map(attribute="name") | join(", ") }}</div>{% endif %}
+        {% if o.waiting %}<div class="small muted waiting">{{ o.waiting }} coverage{{ "s" if o.waiting != 1 }} waiting for skills</div>{% endif %}
+      {% endif %}
+    </li>
+    {% else %}
+    <li class="muted small">None.</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endfor %}
+{% endif %}
+{% endblock %}

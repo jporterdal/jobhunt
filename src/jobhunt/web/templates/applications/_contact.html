@@ -1,0 +1,9 @@
+{# One contact's display. Context: c (contact dict with emails). #}
+{% from "macros.html" import ext_link %}
+<div class="contact">
+  <a href="{{ url_for('applications.contact', contact_id=c.id) }}"><strong>{{ c.name }}</strong></a>
+  {% if c.role %}<span class="muted">· {{ c.role }}</span>{% endif %}
+  {% if c.company_name %}<span class="muted">· {{ c.company_name }}</span>{% endif %}
+  {% for e in c.emails %}<br><a href="mailto:{{ e }}">{{ e }}</a>{% endfor %}
+  {% if c.profile_url %}<br>{{ ext_link(c.profile_url, "Profile ↗") }}{% endif %}
+</div>

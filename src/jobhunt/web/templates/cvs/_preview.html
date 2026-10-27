@@ -1,0 +1,37 @@
+{# A laid-out CV (cvdoc.model.Cv) as HTML: the same content, order and wording as the ODT export (cvdoc/odt.py).
+   L is cvdoc.layout, for the separators. #}
+{% from "macros.html" import ext_link %}
+
+{% macro entry(e, L, sub=False) -%}
+<div class="cv-entry{{ ' cv-sub' if sub }}">
+  <p class="cv-entry-head"><span><strong>{{ e.title }}</strong>{% if e.subtitle %}{{ L.SUBTITLE_SEPARATOR }}{{ e.subtitle }}{% endif %}</span>
+    {%- if e.dates %}<span class="cv-dates">{{ e.dates }}</span>{% endif %}</p>
+  {% for line in e.lines %}<p class="cv-line">{{ line }}</p>{% endfor %}
+  {% if e.sources %}<p class="cv-line cv-source">{% for s in e.sources %}{{ ext_link(s) }}{% if not loop.last %}{{ L.SOURCE_SEPARATOR }}{% endif %}{% endfor %}</p>{% endif %}
+  {% if e.context_note %}<p class="cv-line cv-note">{{ e.context_note }}</p>{% endif %}
+  {% for child in e.children %}{{ entry(child, L, True) }}{% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro preview(cv, L) -%}
+<article class="cv-preview">
+  <header class="cv-header">
+    {% if cv.header.name %}<p class="cv-name">{{ cv.header.name }}</p>{% endif %}
+    {% if cv.header.headline %}<p class="cv-headline">{{ cv.header.headline }}</p>{% endif %}
+    <p class="cv-produced">{{ cv.header.produced }}</p>
+    {% if cv.header.contacts %}<p class="cv-contact">{{ cv.header.contacts | join(L.CONTACT_SEPARATOR) }}</p>{% endif %}
+  </header>
+  {% for s in cv.sections %}
+  <section class="cv-section" data-section="{{ s.key }}">
+    <h3>{{ s.heading }}</h3>
+    {% if s.key == "highlights" %}
+    <ul>{% for b in s.blocks %}<li>{{ b.text }}</li>{% endfor %}</ul>
+    {% else %}
+      {% for b in s.blocks %}
+        {% if b.title is defined %}{{ entry(b, L) }}{% else %}<p class="cv-paragraph">{{ b.text }}</p>{% endif %}
+      {% endfor %}
+    {% endif %}
+  </section>
+  {% endfor %}
+</article>
+{%- endmacro %}

@@ -1,0 +1,18 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "careers.example.org",
+  "external_id": "9000000109",
+  "url": "https://careers.example.org/view/9000000109",
+  "title": "Instructor, Data Analytics",
+  "company": "Example Polytechnic",
+  "location": "Example City, EX",
+  "workplace_type": "On-site",
+  "employment_type": "Full-time",
+  "posted_on": "2026-10-09",
+  "captured_at": "2026-10-10T08:50:00+00:00",
+  "description_html": "<p><strong>About the role</strong></p><p>Teach the second year of our data analytics diploma.</p><p><strong>What you&#x27;ll do</strong></p><ul><li>Teaching two sections of SQL and Tableau each term</li><li>Mentoring students on capstone projects</li></ul><p><strong>What you bring</strong></p><ul><li>A Master&#x27;s degree</li><li>Data visualization</li></ul><p><strong>Nice to have</strong></p><ul><li>Power BI</li></ul><p><strong>Pay and benefits</strong></p><ul><li>Salary: $68,000–$74,000 CAD per year</li><li>Four weeks of vacation and a yearly learning budget</li></ul>",
+  "details": {
+    "apply_method": "company_site"
+  }
+}

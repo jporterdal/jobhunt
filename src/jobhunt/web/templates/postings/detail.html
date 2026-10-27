@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link, company_link, status_badge %}
+{% set p = d.posting %}{% set s = d.latest %}
+{% block title %}{{ s.title }}{% endblock %}
+{% block content %}
+<h1>{{ s.title }}</h1>
+<p class="row">
+  <span>{{ company_link(s.company) }}</span>
+  {% if s.location %}<span>{{ s.location }}</span>{% endif %}
+  {% if s.workplace_type %}<span class="muted">{{ s.workplace_type }}</span>{% endif %}
+  {{ original_link(p.url) }}
+  {% if d.dismissed %}<strong class="error">Dismissed</strong>{% endif %}
+  {% if d.application %}<a href="{{ url_for('applications.application', app_id=d.application.id) }}">Application: {{ status_badge(d.application.status) }}</a>{% endif %}
+</p>
+
+<datalist id="tag-suggestions">{% for t in all_tags %}<option value="{{ t }}">{% endfor %}</datalist>
+<datalist id="skill-suggestions">{% for sk in all_skills %}<option value="{{ sk.name }}">{% endfor %}</datalist>
+
+{% include "postings/_skill_summary.html" %}
+
+<div class="grid2">
+  <div>
+    <section class="panel src-captured">
+      <span class="kind-label">imported</span>
+      <table class="small">
+        <tr><th>Source</th><td>{{ p.source }}</td><th>External ID</th><td>{{ p.external_id }}</td></tr>
+        <tr><th>First seen</th><td>{{ p.first_seen_at | dt }}</td><th>Last seen</th><td>{{ p.last_seen_at | dt }}</td></tr>
+        <tr><th>Posted</th><td>{{ s.posted_on_estimate | d }}{% if s.posted_on_precision in ("week", "month", "year") %} <span class="muted">(to the {{ s.posted_on_precision }})</span>{% endif %}</td>
+            <th>Captures</th><td>{{ d.captures | length }}</td></tr>
+        <tr><th>Employment</th><td colspan="3">{{ s.employment_type or "" }}</td></tr>
+        {% for name, value in d.details.items() %}
+        <tr><th>{{ name | detail_name }}</th><td colspan="3">{{ value | detail_value }}</td></tr>
+        {% endfor %}
+        {% for name, value in d.volatile_details.items() %}
+        <tr class="muted" title="Changes between captures; not compared"><th>{{ name | detail_name }}</th><td colspan="3">{{ value | detail_value }}</td></tr>
+        {% endfor %}
+      </table>
+      <h2>Description</h2>
+      {# Sanitized to an allowlist at import time (p br ul ol li strong b em i u a h1-h6), so it is rendered as is. #}
+      <div class="description" id="description">{{ s.description_html | safe }}</div>
+    </section>
+
+    {% include "llm/_panel.html" %}
+
+    <section class="panel src-captured">
+      <span class="kind-label">imported</span>
+      <h2>History</h2>
+      {% if d.snapshots | length > 1 %}
+      <form method="get" action="{{ url_for('postings.diff', job_id=p.job_id) }}" class="row small">
+        <table>
+          <tr><th>Snapshot</th><th>Captured</th><th>Title</th><th>Old</th><th>New</th></tr>
+          {% for snap in d.snapshots %}
+          <tr>
+            <td>#{{ loop.index }}</td><td>{{ snap.captured_at | dt }}</td><td>{{ snap.title }}</td>
+            <td><input type="radio" name="old" value="{{ snap.id }}" {% if loop.revindex == 2 %}checked{% endif %} aria-label="compare from snapshot {{ loop.index }}"></td>
+            <td><input type="radio" name="new" value="{{ snap.id }}" {% if loop.last %}checked{% endif %} aria-label="compare to snapshot {{ loop.index }}"></td>
+          </tr>
+          {% endfor %}
+        </table>
+        <button type="submit">Show differences</button>
+      </form>
+      {% else %}
+      <p class="small muted">One version of this posting has been captured.</p>
+      {% endif %}
+      <h3>Captures</h3>
+      <ul class="small">
+        {% for c in d.captures %}
+        <li>{{ c.captured_at | dt }} · <a href="{{ url_for('postings.download_capture', job_id=p.job_id, capture_id=c.id) }}">{{ c.source_name }}</a></li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+
+  <div>
+    <section class="panel src-user">
+      <span class="kind-label">yours</span>
+      <h2>Triage</h2>
+      {% with job_id=p.job_id, interest=d.triage.interest if d.triage else None, fit=d.triage.fit if d.triage else None, compact=False %}
+        {% include "triage/_ratings.html" %}
+      {% endwith %}
+      <h3>Tags</h3>
+      {% with job_id=p.job_id, tags=d.tags, compact=False %}{% include "triage/_tags.html" %}{% endwith %}
+      <h3>Notes</h3>
+      {% with job_id=p.job_id, notes=d.triage.notes if d.triage else None %}{% include "triage/_notes.html" %}{% endwith %}
+    </section>
+
+    <section class="panel src-user" id="application-box">
+      <span class="kind-label">yours</span>
+      <h2>Application</h2>
+      {% if d.application %}
+        <p><a href="{{ url_for('applications.application', app_id=d.application.id) }}">{{ d.application.title }}</a> {{ status_badge(d.application.status) }}</p>
+      {% else %}
+        <form method="post" action="{{ url_for('applications.start_from_posting', job_id=p.job_id) }}">
+          <button type="submit" class="primary">Start application</button>
+        </form>
+        {% if manual_applications %}
+        <form method="post" action="{{ url_for('applications.link_posting_from_detail', job_id=p.job_id) }}" class="row small">
+          <label>or link a manual application
+            <select name="app_id">{% for a in manual_applications %}<option value="{{ a.id }}">{{ a.title }} — {{ a.company }}</option>{% endfor %}</select>
+          </label>
+          <button type="submit">Link</button>
+        </form>
+        {% endif %}
+      {% endif %}
+    </section>
+
+    {% include "cvs/_list.html" %}
+
+    {% include "triage/_dismissal.html" %}
+    {% include "triage/_marks.html" %}
+  </div>
+</div>
+
+<form id="mark-popup" class="hidden" method="post" action="{{ url_for('triage.add_mark', job_id=p.job_id) }}">
+  <div class="quote"></div>
+  <input type="hidden" name="quote">
+  <input type="text" name="skill" list="skill-suggestions" placeholder="Skill" aria-label="skill" required>
+  <fieldset class="importance">
+    <label><input type="radio" name="importance" value="" checked> unspecified</label>
+    <label><input type="radio" name="importance" value="required"> required</label>
+    <label><input type="radio" name="importance" value="preferred"> preferred</label>
+  </fieldset>
+  <button type="submit" class="primary">Mark skill</button>
+  <button type="button" data-action="cancel">Cancel</button>
+</form>
+<script type="application/json" id="mark-quotes">{{ mark_quotes | tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='marks.js') }}"></script>{% endblock %}

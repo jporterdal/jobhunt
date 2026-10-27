@@ -1,0 +1,39 @@
+{# Shared bits of the profile pages. Every form posts normally and, with htmx, swaps the page's main in place. #}
+
+{% macro hx(url) -%}
+method="post" action="{{ url }}" hx-post="{{ url }}" hx-target="main" hx-select="main" hx-swap="outerHTML"
+{%- endmacro %}
+
+{% macro origin(row) -%}
+{%- if row.origin in ("model", "suggestion") %}<span class="small origin from-model" title="{{ 'accepted from a document suggestion' if row.origin == 'suggestion' else 'added by a document merge' }}; edit it to make it yours">from model</span>{% endif -%}
+{%- endmacro %}
+
+{% macro src(row) -%}{{ "src-derived" if row.origin in ("model", "suggestion") else "src-user" }}{%- endmacro %}
+
+{% macro dates(start, end, ongoing=False) -%}
+{%- if start and (end or ongoing) -%}{{ start | partial_date }} – {{ "present" if ongoing else end | partial_date }}
+{%- elif ongoing -%}present
+{%- else -%}{{ (end or start) | partial_date }}{%- endif -%}
+{%- endmacro %}
+
+{% macro delete_button(url, what) -%}
+<form class="inline" {{ hx(url) }} hx-confirm="Delete this {{ what }}? Document suggestions won't offer it again."><button type="submit" class="link small" title="delete">delete</button></form>
+{%- endmacro %}
+
+{% macro record_form(url, kinds, disclosures, record=None, button="Save") -%}
+<form {{ hx(url) }} class="row small profile-form">
+  <select name="kind" aria-label="kind">
+    {% for k in kinds %}<option {% if (record.kind if record else 'project') == k %}selected{% endif %}>{{ k }}</option>{% endfor %}
+  </select>
+  <input type="text" name="title" value="{{ record.title or '' if record else '' }}" placeholder="title" aria-label="title" size="28">
+  <input type="text" name="organisation" value="{{ record.organisation or '' if record else '' }}" placeholder="organisation" aria-label="organisation" size="20">
+  <input type="text" name="location" value="{{ record.location or '' if record else '' }}" placeholder="location" aria-label="location" size="12">
+  <input type="text" name="start_date" value="{{ record.start_date or '' if record else '' }}" placeholder="from" aria-label="start date (2022 or 2022-09)" size="7">
+  <input type="text" name="end_date" value="{{ record.end_date or '' if record else '' }}" placeholder="to" aria-label="end date (2022 or 2022-09)" size="7">
+  <label><input type="checkbox" name="ongoing" value="1" {% if record and record.ongoing %}checked{% endif %}> ongoing</label>
+  {% if not record %}
+  <select name="disclosure" aria-label="disclosure">{% for d in disclosures %}<option>{{ d }}</option>{% endfor %}</select>
+  {% endif %}
+  <button type="submit">{{ button }}</button>
+</form>
+{%- endmacro %}

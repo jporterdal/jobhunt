@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Companies{% endblock %}
+{% block content %}
+<h1>Companies</h1>
+{% if companies %}
+<table>
+  <tr><th>Company</th><th>Postings</th><th>Applications</th><th>Contacts</th></tr>
+  {% for c in companies %}
+  <tr>
+    <td><a href="{{ url_for('applications.company', company_id=c.id) }}">{{ c.name }}</a></td>
+    <td>{{ c.postings }}</td><td>{{ c.applications }}</td><td>{{ c.contacts }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No company records yet. Click a company name on a posting or application to create one.</p>
+{% endif %}
+
+<section class="panel src-user" id="new-company">
+  <h2>New company</h2>
+  {% if name %}<p class="small">There is no record for “{{ name }}” yet.</p>{% endif %}
+  <form method="post" action="{{ url_for('applications.create_company') }}" class="row">
+    <input type="text" name="name" value="{{ name }}" required size="40" aria-label="company name">
+    <button type="submit" class="primary">Create company</button>
+  </form>
+</section>
+{% endblock %}

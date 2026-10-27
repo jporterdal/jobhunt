@@ -1,0 +1,18 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "9000000103",
+  "url": "https://jobs.example.com/view/9000000103",
+  "title": "Senior Data Analyst",
+  "company": "Example Insurance",
+  "location": "Remote",
+  "workplace_type": "Remote",
+  "employment_type": "Full-time",
+  "posted_on": "2026-09-30",
+  "captured_at": "2026-10-12T09:30:00+00:00",
+  "description_html": "<p><strong>About the role</strong></p><p>The analytics group supports pricing and claims teams across the country.</p><p><strong>What you&#x27;ll do</strong></p><ul><li>Own the claims team&#x27;s dashboards in Tableau and Power BI</li><li>Design A/B testing for customer letters</li><li>Write SQL against our PostgreSQL warehouse</li></ul><p><strong>What you bring</strong></p><ul><li>Five or more years in analytics</li><li>Strong data visualisation</li><li>Mentoring junior analysts</li></ul><p><strong>Nice to have</strong></p><ul><li>dbt</li><li>Python</li></ul><p><strong>Pay and benefits</strong></p><ul><li>Salary: $88,000–$98,000 CAD per year</li><li>Four weeks of vacation and a yearly learning budget</li></ul>",
+  "details": {
+    "apply_method": "quick_apply"
+  }
+}

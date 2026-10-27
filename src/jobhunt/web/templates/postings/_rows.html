@@ -1,0 +1,25 @@
+{% from "macros.html" import original_link, company_link, status_badge %}
+{% for r in rows %}
+<tr class="{{ 'dismissed' if r.dismissal_id }}" data-job-id="{{ r.job_id }}">
+  <td>
+    <a href="{{ url_for('postings.detail', job_id=r.job_id) }}">{{ r.title }}</a>
+    {{ original_link(r.url) }}
+    {% if r.dismissal_id %}<span class="small muted">(dismissed)</span>{% endif %}
+  </td>
+  <td>{{ company_link(r.company) }}</td>
+  <td>{{ r.location or "" }}{% if r.workplace_type %} <span class="small muted">· {{ r.workplace_type }}</span>{% endif %}</td>
+  <td class="small">
+    {%- if r.salary %}<span class="src-derived salary" title="model output: “{{ r.salary.quote }}”">{{ r.salary | salary_short }}</span>
+    {%- if r.salary_more %} <span class="muted">+{{ r.salary_more }} more</span>{% endif %}{% endif -%}
+  </td>
+  <td class="small">{{ r.posted_on_estimate | d }}</td>
+  <td class="small">{{ r.last_seen_at.strftime("%Y-%m-%d") }}</td>
+  <td>{% with job_id=r.job_id, interest=r.interest, fit=r.fit, compact=True %}{% include "triage/_ratings.html" %}{% endwith %}</td>
+  <td>{% with job_id=r.job_id, tags=r.tags, compact=True %}{% include "triage/_tags.html" %}{% endwith %}</td>
+  <td>{% if r.application_id %}<a href="{{ url_for('applications.application', app_id=r.application_id) }}">{{ status_badge(r.application_status) }}</a>{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="9" class="muted">
+  {% if filters.to_args() %}No postings match these filters.{% else %}No postings yet. Save job pages into the inbox and click “Import inbox”.{% endif %}
+</td></tr>
+{% endfor %}

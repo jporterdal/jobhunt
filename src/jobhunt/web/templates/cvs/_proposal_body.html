@@ -1,0 +1,112 @@
+{# The proposal's choices, gaps and preview; swapped whole by htmx when a choice changes. Ticks are sent as ids
+   (h, r, d); a_* name what the ranking chose by itself and x_* what was unticked before (tailor.Choice.from_args). #}
+{% from "cvs/_preview.html" import preview %}
+{% macro tick(kind, row) -%}
+<input type="checkbox" name="{{ kind }}" value="{{ row.id }}" {% if row.chosen %}checked{% endif %} aria-label="include">
+{%- if row.auto %}<input type="hidden" name="a_{{ kind }}" value="{{ row.id }}">{% endif %}
+{%- if row.unticked %}<input type="hidden" name="x_{{ kind }}" value="{{ row.id }}">{% endif %}
+{%- endmacro %}
+<div id="proposal">
+<form id="proposal-form" method="get" action="{{ url_for('cvs.proposal', job_id=posting.job_id) }}"
+      hx-get="{{ url_for('cvs.proposal', job_id=posting.job_id) }}" hx-trigger="change" hx-target="#proposal" hx-swap="outerHTML" hx-push-url="true">
+<input type="hidden" name="tuned" value="1">
+<div class="grid2">
+  <div>
+    <section class="panel src-derived" id="proposal-score">
+      <span class="kind-label">computed</span>
+      {% if p.has_skills %}
+      <p>Match score: <strong>{{ "%.0f" | format(p.score * 100) }}%</strong> <span class="small muted">· ranking {{ p.method }}</span></p>
+      {% else %}
+      <p>This posting has no skills to tailor to: mark skills on it, or extract them with the model. Details and records are still proposed by their kinds' rules.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel src-user" id="proposal-highlights">
+      <span class="kind-label">yours</span>
+      <h2>Highlights</h2>
+      <p class="row small"><label>Budget <input type="number" name="budget" min="0" max="30" value="{{ p.choice.budget }}" size="3"></label>
+        <span class="muted">chosen one at a time by how much each adds to what is already shown (gain)</span></p>
+      {% if p.highlights %}
+      <table class="small">
+        <tr><th></th><th>#</th><th>Highlight</th><th class="src-derived">Gain</th><th>Covers</th></tr>
+        {% for h in p.highlights %}
+        <tr class="{{ 'chosen' if h.chosen }}" data-highlight-id="{{ h.id }}">
+          <td>{{ tick("h", h) }}</td>
+          <td>{{ h.position or "" }}</td>
+          <td>{{ h.text }}
+            {% if h.flag %}<span class="flag">mentions {{ h.flag }} (private)</span>{% endif %}
+            {% if h.ticked %}<span class="muted">· ticked</span>{% endif %}{% if h.unticked %}<span class="muted">· unticked</span>{% endif %}</td>
+          <td class="src-derived">{{ "%.2f" | format(h.gain) }}</td>
+          <td class="muted">{{ h.claims | join(", ") }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <p class="small muted">Your profile has no highlights yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel src-user" id="proposal-records">
+      <span class="kind-label">yours</span>
+      <h2>Records</h2>
+      <p class="small muted">Private records are never offered. Relevance: what the skills a record grounds are worth to this posting.</p>
+      {% for g in p.records %}
+      <h3>{{ L.HEADINGS[g.kind] }}
+        {% if g.count is not none %}<label class="small">take <input type="number" name="count_{{ g.kind }}" min="0" max="50" value="{{ g.count }}" size="3"></label>
+        {% else %}<span class="small muted">all</span>{% endif %}</h3>
+      <ul class="plain small">
+        {% for r in g.records %}
+        <li data-record-id="{{ r.id }}">{{ tick("r", r) }} {{ r.label }}
+          {% if g.count is not none %}<span class="src-derived muted">· relevance {{ "%.2f" | format(r.relevance) }}</span>{% endif %}
+          {% if r.under %}<span class="muted">· printed under {{ r.under }}</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endfor %}
+      {% for kind in kinds %}{% if kind not in p.records | map(attribute="kind") %}<input type="hidden" name="count_{{ kind }}" value="{{ p.choice.counts[kind] }}">{% endif %}{% endfor %}
+    </section>
+
+    <section class="panel src-user" id="proposal-details">
+      <span class="kind-label">yours</span>
+      <h2>Details</h2>
+      <ul class="plain small">
+        {% for d in p.details %}
+        <li data-detail-id="{{ d.id }}">{{ tick("d", d) }} <span class="muted">{{ d.kind }}</span> {% if d.label %}{{ d.label }}: {% endif %}{{ d.text }}</li>
+        {% else %}
+        <li class="muted">No details yet.</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <p class="row">
+      <noscript><button type="submit">Update preview</button></noscript>
+      <button type="submit" class="primary" formmethod="post" formaction="{{ url_for('cvs.save', job_id=posting.job_id) }}">Save CV</button>
+      <span class="small muted">Saving keeps a copy of this CV as it is now; it can then be downloaded.</span>
+    </p>
+  </div>
+
+  <div>
+    <section class="panel src-derived" id="proposal-gaps">
+      <span class="kind-label">computed</span>
+      <h2>Gaps</h2>
+      {% if p.gaps %}
+      <p class="small muted">Skills you have that this posting asks for, but that nothing chosen shows.</p>
+      <ul class="small">
+        {% for g in p.gaps %}
+        <li data-gap="{{ g.key }}"><strong>{{ g.name }}</strong> <span class="muted">{{ g.importance or "unspecified" }}</span>
+          {% if g.skill_name | lower != g.name | lower %}<span class="muted">→ {{ g.skill_name }}</span>{% endif %}
+          — {{ "covered by an unchosen highlight" if g.covered_by_unchosen else "no highlight covers it" }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="small muted">No gaps: every skill you have that the posting asks for is shown.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel" id="proposal-preview">
+      <h2>Preview</h2>
+      {{ preview(cv, L) }}
+    </section>
+  </div>
+</div>
+</form>
+</div>

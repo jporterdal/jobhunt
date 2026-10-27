@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Postings{% endblock %}
+{% block content %}
+<h1>Postings</h1>
+<form class="filters" method="get" action="{{ url_for('postings.index') }}"
+      hx-get="{{ url_for('postings.index') }}" hx-target="#posting-rows" hx-push-url="true"
+      hx-trigger="change, keyup changed delay:400ms from:#q, submit">
+  <input type="search" id="q" name="q" value="{{ filters.q }}" placeholder="Search title, company, description" aria-label="Search">
+  <label>Tag
+    <input type="text" name="tag" value="{{ filters.tag }}" list="tag-suggestions" size="10">
+  </label>
+  <label>Interest ≥
+    <select name="min_interest">
+      <option value="">any</option>
+      {% for n in range(1, 6) %}<option value="{{ n }}" {% if filters.min_interest == n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+    </select>
+  </label>
+  <label><input type="checkbox" name="unrated" value="1" {% if filters.unrated %}checked{% endif %}> unrated</label>
+  <label>Workplace
+    <select name="workplace">
+      <option value="">any</option>
+      {% for w in workplace_types %}<option {% if filters.workplace == w %}selected{% endif %}>{{ w }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Application
+    <select name="status">
+      <option value="">any or none</option>
+      {% for s in status_filters %}<option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ {'any': 'has one', 'none': 'none yet'}.get(s, s) }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Dismissed
+    <select name="dismissed">
+      {% for m in dismissed_modes %}<option {% if filters.dismissed == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Skills labelled
+    <select name="labelled">
+      <option value="">any</option>
+      {% for v in labelled_filters %}<option value="{{ v }}" {% if filters.labelled == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Sort
+    <select name="sort">
+      {% for s in sorts %}<option value="{{ s }}" {% if filters.sort == s %}selected{% endif %}>{{ s | replace('_', ' ') }}</option>{% endfor %}
+    </select>
+  </label>
+  <button type="submit">Apply</button>
+  <a href="{{ url_for('postings.index') }}" class="small">reset</a>
+</form>
+
+<datalist id="tag-suggestions">{% for t in all_tags %}<option value="{{ t }}">{% endfor %}</datalist>
+
+{% include "llm/_bulk.html" %}
+{% include "llm/_queue.html" %}
+
+<table class="postings">
+  <thead>
+    <tr>
+      <th>Posting</th><th>Company</th><th>Location</th><th>Salary</th><th>Posted</th><th>Last seen</th>
+      <th>Interest</th><th>Tags</th><th>Application</th>
+    </tr>
+  </thead>
+  <tbody id="posting-rows">
+    {% include "postings/_rows.html" %}
+  </tbody>
+</table>
+{% endblock %}

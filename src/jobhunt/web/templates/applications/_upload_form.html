@@ -1,0 +1,10 @@
+{# Upload a document (25 MB limit). Context: document_kinds, app_id (optional: link after upload). #}
+<form method="post" action="{{ url_for('applications.upload_document') }}" enctype="multipart/form-data">
+  {% if app_id %}<input type="hidden" name="app_id" value="{{ app_id }}">{% endif %}
+  <p><input type="file" name="file" required aria-label="file"></p>
+  <p><label>Label <input type="text" name="label" placeholder="e.g. CV v3"></label>
+     <label>Kind
+       <select name="kind">{% for k in document_kinds %}<option value="{{ k }}">{{ k | replace('_', ' ') }}</option>{% endfor %}</select>
+     </label></p>
+  <button type="submit" class="primary">Upload</button> <span class="muted small">Up to 25 MB. Text is extracted from PDF, DOCX, TXT and MD.</span>
+</form>

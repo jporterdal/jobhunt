@@ -1,0 +1,19 @@
+# Run inside the project venv (`source venv/bin/activate`), then `pre-commit install` once.
+# Both hooks use the tools installed by `pip install -e ".[dev]"`, so they match CI and need no network.
+repos:
+  - repo: local
+    hooks:
+      # Personal values from your database (data/jobhunt.db or $JOBHUNT_DB_URL) and data/privacy-terms.txt, plus
+      # personal-looking patterns, in the staged files. Without a database it checks patterns only and says so.
+      - id: privacy-check
+        name: privacy check (staged files)
+        entry: jobhunt privacy-check --staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true  # show the notice when only patterns were checked
+      - id: ruff
+        name: ruff
+        entry: ruff check --force-exclude
+        language: system
+        types: [python]

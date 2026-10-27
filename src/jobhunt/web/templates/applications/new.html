@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}New application{% endblock %}
+{% block content %}
+<h1>Manual application</h1>
+<p class="small muted">For a job you haven't imported. You can link it to a posting later.</p>
+<form method="post" action="{{ url_for('applications.create_application') }}" class="panel src-user">
+  <p><label>Job title<br><input type="text" name="title" required size="50"></label></p>
+  <p><label>Company<br><input type="text" name="company" required size="50"></label></p>
+  <p><label>Job page URL (optional)<br><input type="url" name="url" size="60"></label></p>
+  <button type="submit" class="primary">Create</button>
+</form>
+{% endblock %}

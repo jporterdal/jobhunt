@@ -1,0 +1,10 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "A-1005",
+  "url": "https://jobs.example.com/view/A-1005",
+  "title": "Platform Engineer",
+  "company": "Example Logistics",
+  "description_html": "<div class=\"x\" onclick=\"steal()\"><p>Build our platform. <a href=\"javascript:alert(1)\">Apply here</a></p><script>alert(\"x\")</script><style>p{}</style><!-- a comment --><p>See <a href=\"https://example.com/team\" target=\"_blank\">our team</a>, <a href=\"/relative/path\">the office</a> or <a href=\"mailto:jobs@example.com\">email us</a>.</p><button>Show more</button></div>"
+}

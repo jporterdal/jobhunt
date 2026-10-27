@@ -1,0 +1,19 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "careers.example.org",
+  "external_id": "9000000108",
+  "url": "https://careers.example.org/view/9000000108",
+  "title": "Research Software Developer",
+  "company": "Example University",
+  "location": "Example City, EX",
+  "workplace_type": "On-site",
+  "employment_type": "Full-time",
+  "posted_on": "2026-10-08",
+  "captured_at": "2026-10-09T15:45:00+00:00",
+  "description_html": "<p><strong>About the role</strong></p><p>A research group in the Faculty of Science needs a developer for its data tools.</p><p><strong>What you&#x27;ll do</strong></p><ul><li>Maintain Python packages used by three research labs</li><li>Write REST APIs for lab instruments</li><li>Teaching short workshops for graduate students</li></ul><p><strong>What you bring</strong></p><ul><li>Python and Git</li><li>Linux</li><li>A PhD or Master&#x27;s degree in a scientific field</li></ul><p><strong>Nice to have</strong></p><ul><li>Docker</li></ul><p><strong>Pay and benefits</strong></p><ul><li>Salary: $72,000–$80,000 CAD per year</li><li>Four weeks of vacation and a yearly learning budget</li></ul>",
+  "details": {
+    "apply_method": "company_site",
+    "term": "Two years, renewable"
+  }
+}

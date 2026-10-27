@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link %}
+{% block title %}Import{% endblock %}
+{% block content %}
+<h1>Import</h1>
+{% if error %}
+<p class="error">{{ error }}</p>
+<p class="small muted">Nothing was imported. Put files to import into that folder, or start the server with <code>--inbox</code>.</p>
+{% else %}
+{% for w in warnings %}<p class="error">warning: {{ w }}</p>{% endfor %}
+{% if not results %}
+<p>Nothing to import in <code>{{ inbox }}</code>.</p>
+{% else %}
+<p class="small muted">From <code>{{ inbox }}</code>. Files were moved to <code>processed/</code> or <code>rejected/</code>.</p>
+<table>
+  <tr><th>Outcome</th><th>File</th><th>Posting</th><th>Notes</th></tr>
+  {% for r in results %}
+  <tr class="outcome-{{ r.outcome }}">
+    <td>{{ r.outcome }}</td>
+    <td class="small">{{ r.name }}</td>
+    <td>
+      {% if r.job_id %}
+      <a href="{{ url_for('postings.detail', job_id=r.job_id) }}">{{ r.title or r.external_id }}</a>
+      {% if r.company %}— {{ r.company }}{% endif %}
+      {{ original_link(r.url) }}
+      {% endif %}
+    </td>
+    <td class="small">
+      {% if r.reason %}<span class="error">{{ r.reason }}</span>{% endif %}
+      {% for w in r.warnings %}<div>warning: {{ w }}</div>{% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<p>Totals: {% for o, n in counts.items() if n %}{{ n }} {{ o }}{{ ", " if not loop.last }}{% endfor %}</p>
+{% endif %}
+{% endif %}
+<p><a href="{{ url_for('postings.index') }}">Go to postings</a></p>
+{% endblock %}

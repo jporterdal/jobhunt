@@ -1,0 +1,36 @@
+{# Dismiss / restore and the dismissal history. Context: d (posting detail), reasons. #}
+<section class="panel src-user" id="dismissal">
+  <span class="kind-label">yours</span>
+  <h2>Dismissal</h2>
+  {% if d.dismissed %}
+    {% set current = d.dismissals | selectattr('restored_at', 'none') | first %}
+    <p>Dismissed {{ current.dismissed_at | dt }}: {{ current.reasons | join(', ') }}{% if current.comment %} — {{ current.comment }}{% endif %}</p>
+    <form method="post" action="{{ url_for('triage.restore', job_id=d.posting.job_id) }}">
+      <button type="submit">Restore</button>
+    </form>
+  {% else %}
+    <details>
+      <summary>Dismiss this posting…</summary>
+      <form method="post" action="{{ url_for('triage.dismiss', job_id=d.posting.job_id) }}">
+        <fieldset>
+          <legend class="small">Reasons</legend>
+          {% for r in reasons %}
+          <label class="small"><input type="checkbox" name="reason" value="{{ r.id }}"> {{ r.label }}</label><br>
+          {% endfor %}
+          <label class="small">New reason <input type="text" name="new_reason" placeholder="add to the list"></label>
+        </fieldset>
+        <label class="small">Comment<br><input type="text" name="comment" size="40"></label>
+        <p><button type="submit">Dismiss</button></p>
+      </form>
+    </details>
+  {% endif %}
+  {% if d.dismissals %}
+  <h3>History</h3>
+  <ul class="small">
+    {% for x in d.dismissals %}
+    <li>Dismissed {{ x.dismissed_at | dt }}: {{ x.reasons | join(', ') }}{% if x.comment %} — {{ x.comment }}{% endif %}
+      {% if x.restored_at %}<br>Restored {{ x.restored_at | dt }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>

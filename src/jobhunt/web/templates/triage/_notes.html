@@ -1,0 +1,16 @@
+{# Markdown notes, rendered with raw HTML escaped. Context: job_id, notes. #}
+<div class="notes" id="notes-{{ job_id }}">
+  {% if notes %}
+  <div class="notes-rendered">{{ notes | markdown }}</div>
+  {% else %}
+  <p class="muted small">No notes yet.</p>
+  {% endif %}
+  <details>
+    <summary class="small">Edit notes</summary>
+    <form method="post" action="{{ url_for('triage.save_notes', job_id=job_id) }}"
+          hx-post="{{ url_for('triage.save_notes', job_id=job_id) }}" hx-target="closest .notes" hx-swap="outerHTML">
+      <textarea name="notes" aria-label="notes (markdown)">{{ notes or "" }}</textarea>
+      <button type="submit" class="primary">Save notes</button> <span class="small muted">Markdown; HTML is shown as text.</span>
+    </form>
+  </details>
+</div>

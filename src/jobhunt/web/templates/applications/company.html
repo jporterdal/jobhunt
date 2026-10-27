@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link, ext_link, status_badge %}
+{% set co = c.company %}
+{% block title %}{{ co.name }}{% endblock %}
+{% block content %}
+<h1>{{ co.name }}</h1>
+<p class="row">
+  {% if co.website_url %}<span>Website: {{ ext_link(co.website_url) }}</span>{% endif %}
+  {% if co.careers_url %}<span>Careers: {{ ext_link(co.careers_url) }}</span>{% endif %}
+</p>
+{% if co.notes %}<div class="panel src-user">{{ co.notes | markdown }}</div>{% endif %}
+
+<div class="grid2">
+  <div>
+    <section class="panel src-captured">
+      <span class="kind-label">imported</span>
+      <h2>Postings</h2>
+      <ul>
+        {% for p in c.postings %}
+        <li><a href="{{ url_for('postings.detail', job_id=p.job_id) }}">{{ p.title }}</a> {{ original_link(p.url) }}
+          <span class="small muted">{{ p.location or "" }} · last seen {{ p.last_seen_at.strftime("%Y-%m-%d") }}{% if p.dismissal_id %} · dismissed{% endif %}</span></li>
+        {% else %}
+        <li class="muted small">No stored postings name this company.</li>
+        {% endfor %}
+      </ul>
+    </section>
+    <section class="panel src-user">
+      <span class="kind-label">yours</span>
+      <h2>Applications</h2>
+      <ul>
+        {% for a in c.applications %}
+        <li><a href="{{ url_for('applications.application', app_id=a.id) }}">{{ a.title }}</a> {{ status_badge(a.status) }}
+          {% if a.posting_url %}{{ original_link(a.posting_url) }}{% elif a.url %}{{ ext_link(a.url, "Job page ↗") }}{% endif %}</li>
+        {% else %}
+        <li class="muted small">No applications.</li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+  <div>
+    <section class="panel src-user" id="contacts">
+      <span class="kind-label">yours</span>
+      <h2>Contacts</h2>
+      {% for contact in c.contacts %}
+        {% with c=contact %}{% include "applications/_contact.html" %}{% endwith %}
+      {% else %}
+        <p class="muted small">No contacts.</p>
+      {% endfor %}
+      <details class="small">
+        <summary>Add a contact</summary>
+        {% with action=url_for('applications.create_contact'), contact=None, companies=[co], company_id=co.id, app_id=None %}
+          {% include "applications/_contact_form.html" %}
+        {% endwith %}
+      </details>
+    </section>
+    <section class="panel src-user">
+      <details>
+        <summary>Edit company</summary>
+        <form method="post" action="{{ url_for('applications.edit_company', company_id=co.id) }}">
+          <p><label>Name<br><input type="text" name="name" value="{{ co.name }}" required size="40"></label></p>
+          <p><label>Website URL<br><input type="url" name="website_url" value="{{ co.website_url or '' }}" size="50"></label></p>
+          <p><label>Careers or listing URL<br><input type="url" name="careers_url" value="{{ co.careers_url or '' }}" size="50"></label></p>
+          <p><label>Notes (markdown)<br><textarea name="notes" rows="4">{{ co.notes or '' }}</textarea></label></p>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+    </section>
+  </div>
+</div>
+{% endblock %}

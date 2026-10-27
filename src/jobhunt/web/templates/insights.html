@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link, company_link %}
+{% from "profile/_macros.html" import hx %}
+{% block title %}Insights{% endblock %}
+{% block content %}
+{% set none_of_chosen = "No posting of the chosen workplace types is left to recommend." %}
+<h1>Insights</h1>
+{% if not r.has_posting_skills or not r.has_profile_skills %}
+<section class="panel" id="insights-empty">
+  <p>Nothing to recommend yet.</p>
+  {% if not r.has_posting_skills %}
+  <p class="small">No posting has skills yet: mark skills on <a href="{{ url_for('postings.index') }}">postings</a>, or extract them with the model.</p>
+  {% endif %}
+  {% if not r.has_profile_skills %}
+  <p class="small">Your profile has no skills yet: add your CV, or set levels, on the <a href="{{ url_for('profile.profile_page') }}">profile page</a>.</p>
+  {% endif %}
+</section>
+{% else %}
+
+<form class="filters" method="get" action="{{ url_for('postings.insights') }}"
+      hx-get="{{ url_for('postings.insights') }}" hx-trigger="change" hx-target="main" hx-select="main" hx-swap="outerHTML" hx-push-url="true">
+  <span>Workplace</span>
+  {% for w in workplace_types %}
+  <label><input type="checkbox" name="workplace" value="{{ w }}" {% if r.workplaces is none or w in r.workplaces %}checked{% endif %}> {{ w }}</label>
+  {% endfor %}
+  <noscript><button type="submit">Apply</button></noscript>
+</form>
+
+<h2>Postings to look at first</h2>
+<p class="small muted">Match: how well your profile’s skills cover the skills a posting asks for (required count twice), ranked by match × your interest ÷ 3 (unrated counts as 3).
+  Dismissed postings and postings you applied to are left out{% if r.no_skills %}, and so {{ r.no_skills }} posting{{ "s" if r.no_skills != 1 }} without skills{% endif %}.
+  Showing {{ r.postings | length }} of {{ r.considered }}.</p>
+<table class="recommended-postings">
+  <tr><th>Posting</th><th>Company</th><th>Workplace</th><th>Match</th><th>No link</th><th>Largest gaps</th></tr>
+  {% for p in r.postings %}
+  <tr data-job-id="{{ p.job_id }}">
+    <td>
+      <a href="{{ url_for('postings.detail', job_id=p.job_id) }}">{{ p.title }}</a>
+      {{ original_link(p.url) }}
+      {% if p.interest %}<span class="small muted">· interest {{ p.interest }}</span>{% endif %}
+    </td>
+    <td>{{ company_link(p.company) }}</td>
+    <td class="small workplace">{{ p.workplace_type or "—" }}</td>
+    <td class="match">{{ (p.score * 100) | round | int }}%</td>
+    <td class="small unlinked">{{ p.unlinked }} of {{ p.skills }}</td>
+    <td class="small">{% for g in p.gaps %}{{ g.name }}{% if g.importance == "preferred" %} <span class="muted">(preferred)</span>{% endif %}{{ ", " if not loop.last }}{% endfor %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="muted">{% if r.workplaces and not r.considered %}{{ none_of_chosen }}{% else %}No postings to recommend: every posting with skills is dismissed or has an application.{% endif %}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Skills that would raise your matches most</h2>
+<p class="small muted">Gain: how much the matches above would rise, weighted by interest, if you had the skill at proficient (in percentage points, summed over postings).
+  “Have it” and “Don’t have it” add the skill to your <a href="{{ url_for('profile.profile_page') }}">profile</a>; a skill you don’t have still groups its variants once links are judged again.</p>
+<table class="recommended-skills">
+  <tr><th>Skill</th><th>Your level</th><th>Gain</th><th>Postings</th><th>Most improved</th></tr>
+  {% for s in r.skills %}
+  <tr class="{{ 'src-user' if s.skill_id else '' }}">
+    <td>{{ s.name }}{% if s.also %}<div class="small muted also">also: {{ s.also | join(", ") }}</div>{% endif %}</td>
+    <td class="small">
+      {% if s.skill_id %}
+      <form class="inline" method="post" action="{{ url_for('triage.set_level', skill_id=s.skill_id) }}"
+            hx-post="{{ url_for('triage.set_level', skill_id=s.skill_id) }}" hx-trigger="change" hx-target="main" hx-select="main" hx-swap="outerHTML">
+        <input type="hidden" name="next" value="{{ here }}">
+        <select name="level" aria-label="your level for {{ s.name }}">
+          <option value="" {% if not s.level %}selected{% endif %}>unset</option>
+          {% for lv in skill_levels %}<option {% if s.level == lv %}selected{% endif %}>{{ lv }}</option>{% endfor %}
+        </select>
+        <noscript><button type="submit">Set</button></noscript>
+      </form>
+      {% else %}
+      <form class="inline" {{ hx(url_for('postings.answer_skill')) }}>
+        <input type="hidden" name="next" value="{{ here }}">
+        <input type="hidden" name="name" value="{{ s.name }}">
+        <select name="level" aria-label="your level for {{ s.name }}">
+          {% for lv in skill_levels[1:] %}<option {% if lv == "proficient" %}selected{% endif %}>{{ lv }}</option>{% endfor %}
+        </select>
+        <button type="submit">Have it</button>
+      </form>
+      <form class="inline" {{ hx(url_for('postings.answer_skill')) }}>
+        <input type="hidden" name="next" value="{{ here }}">
+        <input type="hidden" name="name" value="{{ s.name }}">
+        <input type="hidden" name="level" value="missing">
+        <button type="submit">Don’t have it</button>
+      </form>
+      {% endif %}
+    </td>
+    <td class="gain">+{{ "%.0f" | format(s.gain * 100) if s.gain >= 0.01 else "%.1f" | format(s.gain * 100) }}</td>
+    <td class="postings-count">{{ s.improved }}</td>
+    <td class="small">{% for p in s.postings %}<a href="{{ url_for('postings.detail', job_id=p.job_id) }}" title="+{{ (p.rise * 100) | round | int }} points">{{ p.title }}</a> <span class="muted">({{ p.company }})</span>{{ " · " if not loop.last }}{% endfor %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">{% if r.workplaces and not r.considered %}{{ none_of_chosen }}{% else %}No skill would raise a match: every skill these postings ask for is linked to a profile skill at proficient or better.{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% from "macros.html" import original_link, company_link %}
+{% block title %}Tailor a CV · {{ posting.title }}{% endblock %}
+{% block content %}
+<h1>Tailor a CV</h1>
+<p class="row">
+  <a href="{{ url_for('postings.detail', job_id=posting.job_id) }}">{{ posting.title }}</a>
+  <span>{{ company_link(posting.company) }}</span>
+  {{ original_link(posting.url) }}
+</p>
+<p class="small muted">A proposal, worked out from your profile each time this page is shown; nothing is stored until you save it.
+  Wording is changed on the <a href="{{ url_for('profile.profile_page') }}">profile page</a> (for every later CV) or in the exported file (for this one).</p>
+{% include "cvs/_proposal_body.html" %}
+{% endblock %}

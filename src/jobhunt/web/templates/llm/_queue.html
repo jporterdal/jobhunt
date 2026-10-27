@@ -1,0 +1,34 @@
+{# The extraction queue. While jobs are queued or running it polls itself every 3 s; the idle answer (286) has no trigger.
+   Context: queue (queries.queue_overview). #}
+<section id="llm-queue" class="panel queue"
+  {%- if queue.busy %} hx-get="{{ url_for('llm.queue') }}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  {% if queue.active or queue.recent %}
+  <h2>Model queue</h2>
+  {% if queue.busy %}
+  <form method="post" action="{{ url_for('llm.cancel_queue') }}" class="inline"
+        hx-post="{{ url_for('llm.cancel_queue') }}" hx-target="#llm-queue" hx-select="#llm-queue" hx-swap="outerHTML">
+    <input type="hidden" name="next" value="{{ request.full_path if request.method == 'GET' and request.endpoint != 'llm.queue' else '/' }}">
+    <span class="small">{{ queue.running }} running, {{ queue.queued }} queued</span>
+    <button type="submit">Cancel</button>
+  </form>
+  {% endif %}
+  <ul class="small jobs">
+    {% for j in queue.active + queue.recent %}
+    <li class="job-{{ 'cancelling' if j.cancelling else j.status }}">
+      <span class="job-status">{{ "cancelling" if j.cancelling else j.status }}</span>
+      {% if j.kind == "document" %}
+      <a href="{{ url_for('applications.document', document_id=j.document_id) }}">{{ j.document_label }}</a>
+      <span class="muted">· into the profile · {{ j.model }}</span>
+      {% elif j.kind == "links" %}
+      <a href="{{ url_for('profile.links_page') }}">skill links</a>
+      <span class="muted">· {{ j.model }}</span>
+      {% else %}
+      <a href="{{ url_for('postings.detail', job_id=j.job_id) }}#model-says">{{ j.title }}</a>
+      <span class="muted">· {{ j.company }} · {{ j.model }}</span>
+      {% endif %}
+      {% if j.error %}<div class="error">{{ j.error }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>

@@ -1,0 +1,14 @@
+{# "Extract N postings" for the listed postings. Context: filters, extract_count, llm_status, llm_unavailable, oob. #}
+<div id="bulk-extract" class="row small"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <form method="post" action="{{ url_for('llm.extract_list') }}" class="inline src-derived-action"
+        hx-post="{{ url_for('llm.extract_list') }}" hx-target="#llm-queue" hx-select="#llm-queue" hx-swap="outerHTML"
+        hx-select-oob="#bulk-extract"
+        hx-confirm="Queue {{ extract_count }} posting{{ '' if extract_count == 1 else 's' }} for extraction with {{ llm_status.model }}?">
+    {% for name, value in filters.to_args().items() %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+    <button type="submit" {% if llm_unavailable or not extract_count %}disabled{% endif %}>
+      Extract {{ extract_count }} posting{{ '' if extract_count == 1 else 's' }}
+    </button>
+  </form>
+  {% if llm_unavailable %}<span class="muted">{{ llm_unavailable }}</span>
+  {% elif not extract_count %}<span class="muted">Every listed posting is extracted with the current settings.</span>{% endif %}
+</div>

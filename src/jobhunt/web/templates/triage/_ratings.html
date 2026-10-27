@@ -1,0 +1,16 @@
+{# Interest and fit stars; each click saves at once. Context: job_id, interest, fit, compact. #}
+<div class="ratings" id="ratings-{{ job_id }}{{ '-row' if compact }}">
+  {% for field, value in ([('interest', interest)] if compact else [('interest', interest), ('fit', fit)]) %}
+  <form class="stars" method="post" action="{{ url_for('triage.rate', job_id=job_id) }}"
+        hx-post="{{ url_for('triage.rate', job_id=job_id) }}" hx-target="closest .ratings" hx-swap="outerHTML">
+    {% if not compact %}<span class="rating-label">{{ field }}</span>{% endif %}
+    <input type="hidden" name="field" value="{{ field }}">
+    {% if compact %}<input type="hidden" name="compact" value="1">{% endif %}
+    {% for n in range(1, 6) %}
+    <button type="submit" name="value" value="{{ n }}" class="{{ 'on' if value and n <= value }}"
+            title="{{ field }} {{ n }}" aria-label="{{ field }} {{ n }}" aria-pressed="{{ 'true' if value == n else 'false' }}">★</button>
+    {% endfor %}
+    {% if value %}<button type="submit" name="value" value="" class="clear" title="clear {{ field }}">×</button>{% endif %}
+  </form>
+  {% endfor %}
+</div>

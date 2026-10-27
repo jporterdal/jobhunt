@@ -1,0 +1,18 @@
+{
+  "format": "jobhunt-posting",
+  "version": 1,
+  "source": "jobs.example.com",
+  "external_id": "9000000110",
+  "url": "https://jobs.example.com/view/9000000110",
+  "title": "NLP Scientist",
+  "company": "Example Labs",
+  "location": "Remote",
+  "workplace_type": "Remote",
+  "employment_type": "Full-time",
+  "posted_on": "2026-10-10",
+  "captured_at": "2026-10-11T12:00:00+00:00",
+  "description_html": "<p><strong>About the role</strong></p><p>Our research lab studies how large language models handle domain text.</p><p><strong>What you&#x27;ll do</strong></p><ul><li>Fine-tune transformers with PyTorch</li><li>Design evaluations of large language models</li><li>Publish results; technical writing matters</li></ul><p><strong>What you bring</strong></p><ul><li>A PhD in a related field</li><li>NLP</li><li>Python</li></ul><p><strong>Nice to have</strong></p><ul><li>Spark</li></ul><p><strong>Pay and benefits</strong></p><ul><li>Salary: $120,000–$140,000 CAD per year</li><li>Four weeks of vacation and a yearly learning budget</li></ul>",
+  "details": {
+    "apply_method": "quick_apply"
+  }
+}

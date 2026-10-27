@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% from "macros.html" import ext_link %}
+{% from "profile/_macros.html" import hx, origin, src, dates, delete_button, record_form %}
+{% block title %}Profile{% endblock %}
+
+{% block content %}
+<h1>Profile</h1>
+<p class="small muted">What you've done (records), the skills you claim (with the records that ground them) and the wording a CV prints (highlights).
+  Rows from documents are marked “from model” until you change them; deleting one keeps it from being suggested again.</p>
+<p class="row small" id="profile-links">
+  <a href="{{ url_for('profile.suggestions_page') }}">Suggestions ({{ pending }})</a>
+  <a href="{{ url_for('profile.rejections_page') }}">Remembered rejections ({{ rejections }})</a>
+  <a href="{{ url_for('profile.links_page') }}">Skill links</a>
+</p>
+<p class="small" id="profile-counts">
+  {{ p.counts.records }} record{{ "s" if p.counts.records != 1 }}{% for kind, n in p.counts.by_kind.items() %}{{ " (" if loop.first else ", " }}{{ n }} {{ kind }}{{ ")" if loop.last }}{% endfor %} ·
+  {{ p.counts.claims }} skill{{ "s" if p.counts.claims != 1 }}, {{ p.counts.ungrounded }} ungrounded ·
+  {{ p.counts.highlights }} highlight{{ "s" if p.counts.highlights != 1 }}
+</p>
+
+<section class="panel src-user" id="details">
+  <span class="kind-label">yours</span>
+  <h2>Details</h2>
+  <ul class="profile-items">
+    {% for d in p.details %}
+    <li id="detail-{{ d.id }}"><span class="muted small">{{ d.kind }}</span>
+      {% if d.label %}<span class="muted">{{ d.label }}:</span>{% endif %} {{ d.text }}
+      <details class="inline-edit"><summary class="small">edit</summary>
+        <form {{ hx(url_for('profile.edit_detail', detail_id=d.id)) }} class="row small">
+          <select name="kind" aria-label="kind">{% for k in detail_kinds %}<option {% if k == d.kind %}selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+          <input type="text" name="label" value="{{ d.label or '' }}" placeholder="label" aria-label="label" size="8">
+          <input type="text" name="text" value="{{ d.text }}" aria-label="text" required size="50">
+          <button type="submit">Save</button>
+        </form>
+        <form class="inline" {{ hx(url_for('profile.delete_detail', detail_id=d.id)) }}><button type="submit" class="link small">delete</button></form>
+      </details>
+    </li>
+    {% else %}
+    <li class="muted small">No details yet: your name, headline, contact details, summaries and goals go here.</li>
+    {% endfor %}
+  </ul>
+  <form {{ hx(url_for('profile.add_detail')) }} class="row small">
+    <select name="kind" aria-label="kind">{% for k in detail_kinds %}<option>{{ k }}</option>{% endfor %}</select>
+    <input type="text" name="label" placeholder="label (e.g. Email)" aria-label="label" size="10">
+    <input type="text" name="text" placeholder="text" aria-label="text" required size="40">
+    <button type="submit">Add detail</button>
+  </form>
+</section>
+
+<div class="grid2">
+<div>
+  <section class="panel" id="records">
+    <h2>Records</h2>
+    {% for kind, group in p.records %}
+    <h3>{{ kind }} <span class="small muted">({{ group | length }})</span></h3>
+    {% for r in group %}
+    <div class="entry {{ src(r) }}" id="record-{{ r.id }}">
+      <strong>{{ r.title or "" }}</strong>{% if r.title and r.organisation %} — {% endif %}{{ r.organisation or "" }}
+      {% if r.location %}<span class="muted">· {{ r.location }}</span>{% endif %}
+      {% if r.start_date or r.end_date or r.ongoing %}<span class="muted small">· {{ dates(r.start_date, r.end_date, r.ongoing) }}</span>{% endif %}
+      {% if r.effective_disclosure == "private" %}<span class="small private">{{ "private through its context" if r.private_through_context else "private" }}</span>{% endif %}
+      {{ origin(r) }}
+      {% if r.part_of %}<div class="small">Part of <a href="#record-{{ r.part_of.id }}">{{ r.part_of.label }}</a></div>{% endif %}
+      {% if r.context_lost %}
+      <div class="small error lost-context">The record this was part of was deleted: it may lack its context.
+        <form class="inline" {{ hx(url_for('profile.dismiss_lost_context', record_id=r.id)) }}><button type="submit" class="link small">dismiss</button></form>
+      </div>
+      {% endif %}
+      {% if r.lines %}
+      <ul class="profile-items">
+        {% for l in r.lines %}
+        <li class="{{ src(l) }}" id="line-{{ l.id }}">{{ l.text }} {{ origin(l) }}
+          <span class="row-controls small">
+            {% for direction, arrow in (("up", "↑"), ("down", "↓")) %}
+            <form class="inline" {{ hx(url_for('profile.move_line', line_id=l.id)) }}><input type="hidden" name="record_id" value="{{ r.id }}"><input type="hidden" name="direction" value="{{ direction }}"><button type="submit" class="link" aria-label="move line {{ direction }}">{{ arrow }}</button></form>
+            {% endfor %}
+            <form class="inline" {{ hx(url_for('profile.delete_line', line_id=l.id)) }}><input type="hidden" name="record_id" value="{{ r.id }}"><button type="submit" class="link small">delete</button></form>
+          </span>
+          <details class="inline-edit"><summary class="small">edit</summary>
+            <form {{ hx(url_for('profile.edit_line', line_id=l.id)) }} class="row small">
+              <input type="hidden" name="record_id" value="{{ r.id }}">
+              <input type="text" name="text" value="{{ l.text }}" aria-label="line" required size="60"><button type="submit">Save</button>
+            </form>
+          </details>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if r.sources %}
+      <ul class="small sources">
+        {% for s in r.sources %}
+        <li class="{{ src(s) }}" id="source-{{ s.id }}"><span class="muted">{{ s.kind }}:</span>
+          {% if s.url %}{{ ext_link(s.url) }}{% else %}<a href="{{ url_for('applications.document', document_id=s.document_id) }}">{{ s.document_label }}</a>{% endif %}
+          <form class="inline" {{ hx(url_for('profile.delete_source', source_id=s.id)) }}><input type="hidden" name="record_id" value="{{ r.id }}"><button type="submit" class="link small">remove</button></form>
+          {% if s.url %}
+          <details class="inline-edit"><summary class="small">edit</summary>
+            <form {{ hx(url_for('profile.edit_source', source_id=s.id)) }} class="row small">
+              <input type="hidden" name="record_id" value="{{ r.id }}">
+              <input type="url" name="url" value="{{ s.url }}" aria-label="source address" required size="40">
+              <select name="kind" aria-label="source kind">{% for k in source_kinds if k != "document" %}<option {% if k == s.kind %}selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+              <button type="submit">Save</button>
+            </form>
+          </details>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if r.dependents %}<div class="small muted">Part of it: {% for d in r.dependents %}<a href="#record-{{ d.id }}">{{ d.label }}</a>{{ ", " if not loop.last }}{% endfor %}</div>{% endif %}
+      {% if r.grounds %}<div class="small grounds">Grounds: {% for g in r.grounds %}<a href="#skill-{{ g.skill_id }}">{{ g.name }}</a>{{ ", " if not loop.last }}{% endfor %}</div>{% endif %}
+      <details class="inline-edit"><summary class="small">edit</summary>
+        {{ record_form(url_for('profile.edit_record', record_id=r.id), record_kinds, disclosures, r) }}
+        <form {{ hx(url_for('profile.add_line', record_id=r.id)) }} class="row small">
+          <input type="text" name="text" placeholder="a description line" aria-label="new line" required size="50"><button type="submit">Add line</button>
+        </form>
+        <form {{ hx(url_for('profile.add_source', record_id=r.id)) }} class="row small">
+          <input type="url" name="url" placeholder="https://" aria-label="source address" required size="30">
+          <select name="kind" aria-label="source kind"><option value="">kind from the address</option>{% for k in source_kinds if k != "document" %}<option>{{ k }}</option>{% endfor %}</select>
+          <button type="submit">Add source</button>
+        </form>
+        <form {{ hx(url_for('profile.set_disclosure', record_id=r.id)) }} class="row small">
+          <select name="disclosure" aria-label="disclosure">{% for d in disclosures %}<option {% if d == r.disclosure %}selected{% endif %}>{{ d }}</option>{% endfor %}</select>
+          <button type="submit">Set disclosure</button> <span class="muted">a private record grounds skills, but a CV won't show it</span>
+        </form>
+        <form {{ hx(url_for('profile.set_part_of', record_id=r.id)) }} class="row small part-of-form">
+          <select name="part_of_id" aria-label="the record this is part of">
+            <option value="">part of no record</option>
+            {% for c in p.record_choices if c.id != r.id %}<option value="{{ c.id }}" {% if c.id == r.part_of_id %}selected{% endif %}>{{ c.label | truncate(70) }}</option>{% endfor %}
+          </select>
+          <button type="submit">Set context</button>
+          <span class="muted guideline">Link it when {{ guideline }}.</span>
+        </form>
+        {{ delete_button(url_for('profile.delete_record', record_id=r.id), "record, its lines, sources and grounds") }}
+      </details>
+    </div>
+    {% endfor %}
+    {% else %}
+    <p class="muted">No records yet. Upload your CV as a <a href="{{ url_for('applications.documents_page') }}">document</a> of kind “cv”
+      and review its <a href="{{ url_for('profile.suggestions_page') }}">suggestions</a>, or add records by hand.</p>
+    {% endfor %}
+    <details class="panel src-user">
+      <summary>Add a record</summary>
+      {{ record_form(url_for('profile.add_record'), record_kinds, disclosures, None, "Add record") }}
+    </details>
+  </section>
+
+  <section class="panel" id="highlights">
+    <h2>Highlights <span class="small muted">({{ p.highlights | length }})</span></h2>
+    <p class="small muted">Wording a CV prints, each covering the skills it shows.</p>
+    <ul class="profile-items">
+      {% for h in p.highlights %}
+      <li class="{{ src(h) }}" id="highlight-{{ h.id }}">{{ h.text }} {{ origin(h) }}
+        <div class="small">{% if h.claims %}Covers: {% for c in h.claims %}<a href="#skill-{{ c.skill_id }}">{{ c.name }}</a>
+          <form class="inline" {{ hx(url_for('profile.remove_coverage', highlight_id=h.id, skill_id=c.skill_id)) }}><button type="submit" class="link small" aria-label="stop covering {{ c.name }}">×</button></form>{{ ", " if not loop.last }}{% endfor %}
+          {% else %}<span class="muted">covers no skill</span>{% endif %}</div>
+        <details class="inline-edit"><summary class="small">edit</summary>
+          <form {{ hx(url_for('profile.edit_highlight', highlight_id=h.id)) }} class="row small">
+            <input type="text" name="text" value="{{ h.text }}" aria-label="highlight" required size="60"><button type="submit">Save</button>
+          </form>
+          <form {{ hx(url_for('profile.add_coverage', highlight_id=h.id)) }} class="row small">
+            <select name="skill_id" aria-label="skill it covers" required>
+              <option value="">covers…</option>
+              {% for c in p.claim_choices %}<option value="{{ c.skill_id }}">{{ c.name }}</option>{% endfor %}
+            </select>
+            <input type="text" name="quote" placeholder="quote (optional)" aria-label="quote" size="16">
+            <button type="submit">Add</button>
+          </form>
+          {{ delete_button(url_for('profile.delete_highlight', highlight_id=h.id), "highlight") }}
+        </details>
+      </li>
+      {% endfor %}
+    </ul>
+    <form {{ hx(url_for('profile.add_highlight')) }} class="row small">
+      <input type="text" name="text" placeholder="a line of CV wording" aria-label="new highlight" required size="50">
+      <button type="submit">Add highlight</button>
+    </form>
+  </section>
+</div>
+
+<div>
+  <section class="panel src-user" id="skills">
+    <span class="kind-label">yours</span>
+    <h2>Skills <span class="small muted">({{ p.counts.claims }})</span></h2>
+    {% for level, group in p.claims %}
+    <h3>{{ level }}</h3>
+    <ul class="profile-skills">
+      {% for c in group %}
+      <li id="skill-{{ c.skill_id }}" class="{{ 'src-derived' if c.level_origin == 'model' else 'src-user' }}">
+        <strong>{{ c.name }}</strong>
+        <form class="inline" {{ hx(url_for('triage.set_level', skill_id=c.skill_id)) }} hx-trigger="change">
+          <input type="hidden" name="next" value="{{ url_for('profile.profile_page') }}">
+          <select name="level" aria-label="your level for {{ c.name }}">
+            {% for lv in levels %}<option {% if lv == c.level %}selected{% endif %}>{{ lv }}</option>{% endfor %}
+          </select>
+          <noscript><button type="submit">Set</button></noscript>
+        </form>
+        {% if c.level_origin == "model" %}<span class="small origin from-model" title="the level a document suggested; set it to make it yours">from model</span>{% endif %}
+        {% if c.ungrounded %}<span class="small flag ungrounded" title="no record grounds this skill">ungrounded</span>{% endif %}
+        {% if c.no_highlight %}<span class="small flag no-highlight" title="no highlight covers this skill">no highlight</span>{% endif %}
+        <ul class="small evidence">
+          {% for g in c.grounds %}
+          <li class="{{ src(g) }}"><a href="#record-{{ g.record_id }}">{{ g.record_label }}</a> <span class="muted">“{{ g.quote }}”</span>
+            <form class="inline" {{ hx(url_for('profile.remove_ground', skill_id=c.skill_id, record_id=g.record_id)) }}><button type="submit" class="link small" title="remove this ground">remove</button></form>
+          </li>
+          {% endfor %}
+          {% for h in c.highlights %}
+          <li class="{{ src(h) }}"><a href="#highlight-{{ h.highlight_id }}">“{{ h.text | truncate(70) }}”</a> <span class="muted">highlight</span></li>
+          {% endfor %}
+        </ul>
+        {% if c.aliases %}
+        <div class="small aliases">Also: {% for a in c.aliases %}{{ a.name }}
+          <form class="inline" {{ hx(url_for('profile.remove_alias')) }}><input type="hidden" name="alias_key" value="{{ a.key }}"><input type="hidden" name="skill_id" value="{{ c.skill_id }}"><button type="submit" class="link small" aria-label="remove the alias {{ a.name }}">×</button></form>{{ ", " if not loop.last }}{% endfor %}
+        </div>
+        {% endif %}
+        {% if linked[c.skill_id] %}
+        <div class="small linked">Postings ask for:
+          {% for ps in linked[c.skill_id] %}<span class="linked-skill" title="{{ ps.source }}">{{ ps.name }} ({{ ps.postings }}{% if ps.relation != 'same' %}, {{ ps.relation }}{% endif %})</span>{% if not loop.last %}, {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+        <details class="inline-edit small"><summary>more</summary>
+          <form {{ hx(url_for('profile.add_ground', skill_id=c.skill_id)) }} class="row">
+            <select name="record_id" aria-label="record that shows {{ c.name }}" required>
+              <option value="">grounded by…</option>
+              {% for r in p.record_choices %}<option value="{{ r.id }}">{{ r.label | truncate(70) }}</option>{% endfor %}
+            </select>
+            <input type="text" name="quote" placeholder="quote (optional)" aria-label="quote" size="16">
+            <button type="submit">Add ground</button>
+          </form>
+          <form {{ hx(url_for('profile.merge_skill', skill_id=c.skill_id)) }} class="row" hx-confirm="Merge {{ c.name }} into the chosen skill? Its grounds and highlights move there and {{ c.name }} becomes an alias.">
+            <select name="into" aria-label="skill to merge {{ c.name }} into" required>
+              <option value="">merge into…</option>
+              {% for o in p.claim_choices if o.skill_id != c.skill_id %}<option value="{{ o.skill_id }}">{{ o.name }}</option>{% endfor %}
+            </select>
+            <button type="submit">Merge</button>
+          </form>
+          <form {{ hx(url_for('profile.rename_skill', skill_id=c.skill_id)) }} class="row">
+            <input type="text" name="name" value="{{ c.name }}" aria-label="new name for {{ c.name }}" required>
+            <button type="submit">Rename</button>
+            <span class="muted">renames it on postings too</span>
+          </form>
+          <form {{ hx(url_for('profile.remove_skill', skill_id=c.skill_id)) }} hx-confirm="Remove {{ c.name }}, its grounds and its highlight coverage from the profile? Postings keep their marks.">
+            <button type="submit">Remove from profile</button>
+          </form>
+        </details>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="small muted">No skills yet.</p>
+    {% endfor %}
+    <form {{ hx(url_for('profile.add_skill')) }} class="row small">
+      <input type="text" name="name" placeholder="skill" aria-label="skill to add" required>
+      <select name="level" aria-label="level">{% for lv in levels %}<option {% if lv == 'proficient' %}selected{% endif %}>{{ lv }}</option>{% endfor %}</select>
+      <button type="submit">Add skill</button>
+    </form>
+  </section>
+</div>
+</div>
+{% endblock %}

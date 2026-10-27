@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}jobhunt{% endblock %} · jobhunt</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="{{ url_for('static', filename='htmx.min.js') }}" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('postings.index') }}">jobhunt</a>
+    {% if demo_data %}<span class="demo-label" title="Built by jobhunt demo: a fictional person's job search">Demo data</span>{% endif %}
+    <nav>
+      {% set section = section | default('') %}
+      <a href="{{ url_for('postings.index') }}" {% if section == 'postings' %}aria-current="page"{% endif %}>Postings</a>
+      <a href="{{ url_for('applications.board') }}" {% if section == 'applications' %}aria-current="page"{% endif %}>Applications</a>
+      <a href="{{ url_for('applications.companies') }}" {% if section == 'companies' %}aria-current="page"{% endif %}>Companies</a>
+      <a href="{{ url_for('profile.profile_page') }}" {% if section == 'profile' %}aria-current="page"{% endif %}>Profile</a>
+      <a href="{{ url_for('triage.skills_page') }}" {% if section == 'skills' %}aria-current="page"{% endif %}>Skills</a>
+      <a href="{{ url_for('postings.insights') }}" {% if section == 'insights' %}aria-current="page"{% endif %}>Insights</a>
+      <a href="{{ url_for('llm.settings_page') }}" {% if section == 'settings' %}aria-current="page"{% endif %}>Settings</a>
+    </nav>
+    {# Loaded after the page, so a slow or unreachable Ollama never delays it. #}
+    <span id="llm-status" hx-get="{{ url_for('llm.status') }}" hx-trigger="load, every 15s" hx-swap="innerHTML"></span>
+    <form method="post" action="{{ url_for('postings.import_inbox') }}" class="import-form">
+      <button type="submit" title="Import every file in the inbox">Import inbox</button>
+    </form>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
