@@ -101,6 +101,8 @@ Screenshots come only from a demo database, taken in a browser profile with no b
 
 **Sign-off (2026-10-27):** the user read the public tree and approved it, along with the screenshots, the README's "How this was built" wording and every allow-file entry. The public repository is `jobsearch`, a new repository; the package stays `jobhunt`. Its commits use the GitHub handle and its noreply address, never the private repo's identity.
 
+**Published (2026-10-27)** as the public `jobsearch` repository on GitHub. The first CI run failed the Python 3.11 job: `recommend.pool` used `math.sumprod`, which needs 3.12. After the fix (`f32f5dc`), every job passed on `67348c3`.
+
 ### D10. The boundary with `separate-capture-parser`
 
 That change, made first, owns the split. It makes the public app source-neutral: posting identity by source and external ID, neutral link labels and wording in the UI, a public import format, and a plug-in point that a private parser registers with. It moves the parser and its date parsing, `PARSER_VERSION`, the saved-page fixtures (synthetic and private), the extraction and import tests over them, the `posting-extraction` spec (`capture-import` stays, rewritten in source-neutral terms, since it holds the public import format), and the capture workflow in `CLAUDE.md` to a private repository. It also lists the archived changes that are only about the parser, which move there as well. That list is kept in its private notes (moved into the private parser repository's docs), not in either change's artifacts, so the archives are named nowhere in the public tree.
