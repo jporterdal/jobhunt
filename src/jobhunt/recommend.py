@@ -4,7 +4,6 @@ model requests, no Flask."""
 
 from __future__ import annotations
 
-import math
 import re
 from collections import ChainMap, defaultdict
 from collections.abc import Iterable, Mapping
@@ -124,6 +123,8 @@ def pool(counts: Mapping[str, int], names: Mapping[str, str], vectors: Mapping[s
     the qualifying pool it is most similar to (by unit vectors): similarity ≥ POOL_SIMILARITY, or the leader's
     words in its words and similarity ≥ POOL_NAME_SIMILARITY. A key without a vector is alone, as is one
     qualifying for no pool."""
+    from .enrich.links import dot
+
     order = sorted(counts, key=lambda key: (-counts[key], len(names[key]), key))
     leaders: list[tuple[str, list[float], list[str]]] = []
     out: dict[str, str] = {}
@@ -134,7 +135,7 @@ def pool(counts: Mapping[str, int], names: Mapping[str, str], vectors: Mapping[s
             continue
         words, best, joined = _words(key), -2.0, None
         for leader, theirs, leader_words in leaders:
-            similarity = math.sumprod(vector, theirs)
+            similarity = dot(vector, theirs)
             if similarity > best and (
                 similarity >= POOL_SIMILARITY
                 or (similarity >= POOL_NAME_SIMILARITY and _contains(words, leader_words))

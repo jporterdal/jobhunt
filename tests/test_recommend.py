@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from jobhunt import queries, recommend, userdata
 from jobhunt.db import DERIVED_TABLES, OPERATIONAL_TABLES, USER_TABLES
 from jobhunt.enrich import derived
-from jobhunt.enrich.links import PIPELINE, Candidate, Planned
+from jobhunt.enrich.links import PIPELINE, Candidate, Planned, dot
 from jobhunt.recommend import credit, pool, rank_postings, score, skill_gains
 
 from .conftest import add_posting
@@ -205,7 +205,7 @@ def test_pools_dont_chain():
     # 0.85 to Kubernetes, 0.92 to Container orchestration: y solves 0.85 × 0.92 + y × orchestration[1] = 0.92
     y = (0.92 - 0.85 * 0.92) / orchestration[1]
     containers = [0.85, y, math.sqrt(1 - 0.85 ** 2 - y ** 2)]
-    assert math.sumprod(containers, orchestration) == pytest.approx(0.92)
+    assert dot(containers, orchestration) == pytest.approx(0.92)
     found = pools({"Kubernetes": 5, "Container orchestration": 3, "Containers": 2},
                   {"Kubernetes": BASE, "Container orchestration": orchestration, "Containers": containers})
     assert found == {"Kubernetes": "Kubernetes", "Container orchestration": "Kubernetes", "Containers": "Containers"}
