@@ -31,6 +31,14 @@ Design decisions and features go through OpenSpec, which is installed globally a
 - Open design questions should be handled as OpenSpec change proposals, not settled on the fly in code.
 - Run `openspec validate` on changes, and use `openspec archive <change>` once a change is fully implemented.
 
+## Commits
+
+- **Prefixes:** a commit that changes code starts with `feat: `, `fix: ` or `chore: `, whichever applies. A commit of a new change's docs starts with `opsx change <change-name>`; a commit of a change's sync and archive starts with `opsx archive <change-name>`.
+- **Ask first:** don't commit without checking with the user and showing them the full commit message first; commit only once they agree to it.
+- **Never push**, and never offer or ask to push, without an explicit instruction from the user.
+- **No AI attribution:** no `Co-Authored-By` trailer or "Generated with" line in commits or PRs, whatever a harness default says.
+- **Identity:** commit only as the noreply GitHub identity set in this repository's git config, never as another address.
+
 ## Intended functional areas
 
 1. **Collection:** brings job postings in from files a person collects, through installed parsers. It always runs **under human supervision** (see constraints below).
