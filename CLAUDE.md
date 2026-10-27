@@ -30,6 +30,7 @@ Design decisions and features go through OpenSpec, which is installed globally a
 - Before implementing a feature, check for an existing spec or change proposal (`openspec list`, `openspec list --specs`, `openspec show <item>`), and implement against it.
 - Open design questions should be handled as OpenSpec change proposals, not settled on the fly in code.
 - Run `openspec validate` on changes, and use `openspec archive <change>` once a change is fully implemented.
+- **Parser changes:** every proposal states its parser impact (none, optional or required; rules in `openspec/config.yaml`). When it isn't none, the change carries `parser-changes.md`, a self-contained brief for parser maintainers, and `docs/parsers.md` (the guide for parser authors) gets a contract changelog entry. Parsers can live in other repositories, private ones included, so never edit them from here: tell the user when a change needs parser work, both when proposing it and before archiving it, and point them to the brief.
 
 ## Commits
 
