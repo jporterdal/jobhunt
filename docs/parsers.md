@@ -206,4 +206,4 @@ Each change to what jobhunt asks of parsers, newest first. *Optional* changes ke
 - **Optional: `discardable(path)`** (change `prune-discardable-companions`). A parser can mark which of its
   companions the daily prune may delete from `inbox/processed/` and `inbox/rejected/`. Parsers without it keep
   every companion. Brief for maintainers:
-  [parser-impact.md](../openspec/changes/prune-discardable-companions/parser-impact.md).
+  [parser-impact.md](../openspec/changes/archive/2026-10-28-prune-discardable-companions/parser-impact.md).
