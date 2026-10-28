@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 GROUP = "jobhunt.parsers"
+# The download metadata some systems keep beside a downloaded file; it belongs to no parser.
+DOWNLOAD_METADATA = ":Zone.Identifier"
 
 # A detail's value: text, a number, true or false, a list of text, or null (absent).
 Value = str | int | float | bool | list[str] | None
@@ -66,6 +68,8 @@ class Parser(Protocol):
         ...
 
     # Optional: `companions(path) -> list[Path]`, the files that belong to `path` and move with it.
+    # Optional: `discardable(path) -> list[Path]`, which of those companions the prune may delete once `path` has
+    # been filed away (only paths `companions(path)` also names count; see `discardable` below).
 
 
 def label(parser: Parser) -> str:
@@ -76,6 +80,21 @@ def companions(parser: Parser, path: Path) -> list[Path]:
     """The companions a parser names for `path` (none when it has no `companions`)."""
     method = getattr(parser, "companions", None)
     return list(method(path)) if method is not None else []
+
+
+def discardable(parser: Parser, path: Path) -> list[Path]:
+    """The companions a parser marks discardable for `path`: only its own companions, never `path` or its download
+    metadata. Empty when it has no `discardable`, or when either method raises."""
+    method = getattr(parser, "discardable", None)
+    if method is None:
+        return []
+    try:
+        marked = list(method(path))
+        own = set(companions(parser, path))
+    except Exception:  # a broken parser keeps everything
+        return []
+    kept = {path, path.with_name(path.name + DOWNLOAD_METADATA)}
+    return [p for p in dict.fromkeys(marked) if p in own and p not in kept]
 
 
 @dataclass(frozen=True)

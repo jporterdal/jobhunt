@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     Date,
@@ -659,6 +660,21 @@ llm_jobs = Table(
     Column("finished_at", UTCDateTime),
 )
 
+# --- Operational data: the record of each inbox prune, written only by prune.py. Rows are appended, never updated. ---
+
+inbox_prunes = Table(
+    "inbox_prunes",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("inbox", Text, nullable=False, index=True),  # the resolved absolute path of the inbox pruned
+    Column("started_at", UTCDateTime, nullable=False),
+    Column("finished_at", UTCDateTime, nullable=False),
+    Column("removed", Integer, nullable=False),  # companions removed
+    Column("bytes", BigInteger, nullable=False),  # their total apparent size
+    Column("problems", Integer, nullable=False),
+    Column("detail", Text, nullable=False),  # the first 50 problems as JSON: [[path, reason], ...]
+)
+
 USER_TABLES = (
     posting_triage,
     tags,
@@ -706,7 +722,7 @@ DERIVED_TABLES = (
     link_measurements,
 )
 
-OPERATIONAL_TABLES = (llm_jobs,)
+OPERATIONAL_TABLES = (llm_jobs, inbox_prunes)
 
 
 def make_engine(url: str = DEFAULT_DB_URL, **kwargs) -> Engine:

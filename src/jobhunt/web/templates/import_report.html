@@ -35,5 +35,16 @@
 <p>Totals: {% for o, n in counts.items() if n %}{{ n }} {{ o }}{{ ", " if not loop.last }}{% endfor %}</p>
 {% endif %}
 {% endif %}
+<h2>Pruning</h2>
+{% if last_prune %}
+<p class="prune-latest">Latest prune finished {{ last_prune.finished_at|dt }}: removed {{ last_prune.removed }}
+{{ "companion" if last_prune.removed == 1 else "companions" }} ({{ last_prune.bytes|size }}),
+{{ last_prune.problems }} {{ "problem" if last_prune.problems == 1 else "problems" }}.</p>
+{% else %}
+<p class="prune-latest">Not pruned yet.</p>
+{% endif %}
+<p class="small muted">The server deletes the companions installed parsers mark discardable (such as saved pages' asset
+folders) from <code>processed/</code> and <code>rejected/</code> once a day; <code>jobhunt inbox prune --dry-run</code>
+lists them first.</p>
 <p><a href="{{ url_for('postings.index') }}">Go to postings</a></p>
 {% endblock %}

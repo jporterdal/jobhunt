@@ -1,5 +1,5 @@
-"""Command line: `jobhunt import [PATH ...]`, `jobhunt serve`, `jobhunt eval`, `jobhunt profile reset`,
-`jobhunt privacy-check` and `jobhunt demo`."""
+"""Command line: `jobhunt import [PATH ...]`, `jobhunt inbox prune`, `jobhunt serve`, `jobhunt eval`,
+`jobhunt profile reset`, `jobhunt privacy-check` and `jobhunt demo`."""
 
 from __future__ import annotations
 
@@ -67,6 +67,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     imp.add_argument("paths", nargs="*", type=Path, metavar="PATH", help="file(s) to import in place")
     _storage_args(imp)
+
+    inbox = commands.add_parser("inbox", help="maintain the inbox")
+    inbox_commands = inbox.add_subparsers(dest="inbox_command", required=True)
+    prune = inbox_commands.add_parser(
+        "prune",
+        help="delete the companions installed parsers mark discardable from inbox/processed/ and inbox/rejected/",
+        description="Delete the companions installed parsers mark discardable (such as a saved page's asset folder) "
+        "from inbox/processed/ and inbox/rejected/, and record the prune. Files directly in the inbox, the filed-away "
+        "files themselves, their download metadata and every other companion are kept, and links are not followed. "
+        "`serve` does this daily. Deleted companions can't be restored. Exit 0: done; 1: some couldn't be removed; "
+        "2: no inbox folder.",
+    )
+    prune.add_argument(
+        "--dry-run", action="store_true", help="list what would be removed, with sizes; remove and record nothing"
+    )
+    _storage_args(prune)
 
     serve = commands.add_parser(
         "serve",
@@ -208,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
             return _eval(args)
         if args.command == "profile":
             return _profile_reset(args)
+        if args.command == "inbox":
+            return _inbox_prune(args)
         if args.command == "demo":
             return _demo(args)
         return _import(args)
@@ -324,13 +342,50 @@ def _import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _inbox_prune(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from . import prune
+    from .parsers import installed as installed_parsers
+    from .units import format_size
+
+    installed = installed_parsers()
+    for warning in installed.errors:
+        print(f"warning: {warning}")
+    if not args.inbox.is_dir():
+        print(f"error: inbox folder not found: {args.inbox}", file=sys.stderr)
+        return 2
+    verb = "would remove" if args.dry_run else "removed"
+
+    def show(companion: prune.Companion, problem: str | None) -> None:
+        if problem is None:
+            print(f"{verb}  {prune.shown(companion.path, args.inbox)}  {format_size(companion.size)}")
+
+    engine = None if args.dry_run else make_engine(args.db)
+    try:
+        if engine is not None:
+            init_db(engine)
+        result = prune.run(
+            engine, args.inbox, installed.parsers, datetime.now(UTC), dry_run=args.dry_run, on_companion=show
+        )
+    finally:
+        if engine is not None:
+            engine.dispose()
+    for path, reason in result.problems:
+        print(f"problem  {prune.shown(path, args.inbox)}: {reason}")
+    print(f"Totals: {result.summary()}")
+    return 1 if result.problems else 0
+
+
 def _serve(args: argparse.Namespace) -> int:
     from .enrich.jobs import Worker
     from .enrich.ollama import OllamaClient
+    from .parsers import installed as installed_parsers
+    from .prune import Pruner
     from .web import create_app
 
     engine = make_engine(args.db)
-    worker = None
+    worker = pruner = None
     try:
         init_db(engine)
         client = OllamaClient(args.ollama_url)
@@ -347,15 +402,21 @@ def _serve(args: argparse.Namespace) -> int:
                 "anyone who can reach this address can read and change your data.",
                 file=sys.stderr,
             )
-        # The debug reloader's parent process only watches files; the worker runs in the child it serves from.
+        # The debug reloader's parent process only watches files; the worker and the daily prune run in the child
+        # it serves from.
         if not args.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
             worker = Worker(engine, client)
             worker.start()
+            pruner = Pruner(engine, args.inbox, installed_parsers().parsers)
+            pruner.start()
         app.run(host=args.host, port=args.port, debug=args.debug, use_reloader=args.debug, threaded=True)
     finally:
-        if worker is not None:
-            worker.stop()
-            worker.join(timeout=5)
+        for thread in (worker, pruner):
+            if thread is not None:
+                thread.stop()
+        for thread in (worker, pruner):
+            if thread is not None:
+                thread.join(timeout=5)
         engine.dispose()
     return 0
 

@@ -29,7 +29,7 @@ def discardable(self, path: Path) -> list[Path]:
     """Which of `path`'s companions may be deleted once `path` has been filed away."""
 ```
 
-- jobhunt calls it on files directly inside `inbox/processed/` and `inbox/rejected/`, during a *prune*. The server prunes daily, and `jobhunt inbox prune` prunes on demand. Every installed parser is asked about every such file, including files it didn't accept.
+- jobhunt calls it on files directly inside `inbox/processed/` and `inbox/rejected/`, during a *prune*. The server prunes daily, and `jobhunt inbox prune` prunes on demand. Every installed parser is asked about every such file, including files it didn't accept (a file that some parser names as another file's companion isn't asked about).
 - Only paths that your `companions(path)` also returns count. Anything else you return is ignored.
 - The file itself and its download metadata (`<name>:Zone.Identifier`) are never deleted, even if returned.
 - Returning `[]`, not defining the method, or raising an error all mean "keep everything".

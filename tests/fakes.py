@@ -136,12 +136,17 @@ class FakeParser:
     whatever their type,
     and reads `key=value` lines: `id`, `source`, `title`, `company`, `url`, `description` (HTML), `warning`,
     `reject` (a Rejected with that reason) and `raise` (an error with that message). `companion_suffixes` name its
-    companions: `page.html` with ("_files", ".meta") has `page_files` and `page.meta`."""
+    companions: `page.html` with ("_files", ".meta") has `page_files` and `page.meta`; `discardable_suffixes` (meant
+    as a subset) name the ones it marks discardable."""
 
-    def __init__(self, name: str = "fake", version: str = "1", companion_suffixes: tuple[str, ...] = ()):
+    def __init__(
+        self, name: str = "fake", version: str = "1", companion_suffixes: tuple[str, ...] = (),
+        discardable_suffixes: tuple[str, ...] = (),
+    ):
         self.name = name
         self.version = version
         self.companion_suffixes = companion_suffixes
+        self.discardable_suffixes = discardable_suffixes
         self.calls = 0
 
     def parse(self, file):
@@ -172,6 +177,9 @@ class FakeParser:
 
     def companions(self, path):
         return [path.with_name(path.stem + suffix) for suffix in self.companion_suffixes]
+
+    def discardable(self, path):
+        return [path.with_name(path.stem + suffix) for suffix in self.discardable_suffixes]
 
 
 def fake_file(origin: str, wrap_html: bool = False, **fields) -> str:

@@ -8,7 +8,7 @@ from io import BytesIO
 from flask import Blueprint, abort, current_app, redirect, render_template, request, send_file, url_for
 from sqlalchemy import select
 
-from .. import queries, recommend, userdata
+from .. import prune, queries, recommend, userdata
 from ..db import captures
 from ..enrich import jobs
 from ..importer import OUTCOMES, discover, import_files
@@ -114,12 +114,19 @@ def diff(job_id: int):
 def import_inbox():
     inbox = current_app.config["INBOX"]
     if not inbox.is_dir():
-        return render_template("import_report.html", error=f"Inbox folder not found: {inbox}", inbox=inbox), 404
+        with reading() as conn:
+            last_prune = prune.latest(conn, inbox)
+        return render_template(
+            "import_report.html", error=f"Inbox folder not found: {inbox}", inbox=inbox, last_prune=last_prune
+        ), 404
     installed = current_app.config["PARSERS"]
     results = import_files(current_app.config["ENGINE"], discover(inbox, installed.parsers), inbox, installed.parsers)
     counts = {o: sum(r.outcome == o for r in results) for o in OUTCOMES}
+    with reading() as conn:
+        last_prune = prune.latest(conn, inbox)
     return render_template(
-        "import_report.html", results=results, counts=counts, inbox=inbox, error=None, warnings=installed.errors
+        "import_report.html", results=results, counts=counts, inbox=inbox, error=None, warnings=installed.errors,
+        last_prune=last_prune,
     )
 
 

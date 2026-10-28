@@ -14,6 +14,7 @@ from markupsafe import Markup
 from sqlalchemy.engine import Connection, Engine
 
 from ..queries import detail_label
+from ..units import format_size
 from ..userdata import SKILL_LEVELS, get_setting
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -156,14 +157,6 @@ def format_detail(value) -> str:
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
     return str(value)
-
-
-def format_size(size: int) -> str:
-    for unit in ("bytes", "KB", "MB"):
-        if size < 1024 or unit == "MB":
-            return f"{size} {unit}" if unit == "bytes" else f"{size:.1f} {unit}"
-        size /= 1024
-    return str(size)
 
 
 PERIODS = {"year": "yr", "month": "mo", "biweekly": "2 wk", "week": "wk", "day": "day", "hour": "hr"}

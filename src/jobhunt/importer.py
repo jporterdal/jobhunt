@@ -14,14 +14,12 @@ from sqlalchemy.engine import Engine
 
 from . import parsers as plugins
 from .db import postings
-from .parsers import CaptureFile, ParsedPosting, Parser, Rejected
+from .parsers import DOWNLOAD_METADATA, CaptureFile, ParsedPosting, Parser, Rejected
 from .store import InvalidPosting, find_capture, latest_snapshot, sha256_hex, store_capture
 
 OUTCOMES = ("new", "updated", "unchanged", "duplicate", "rejected")
 PROCESSED_DIR = "processed"
 REJECTED_DIR = "rejected"
-# The download metadata some systems keep beside a downloaded file; it belongs to no parser.
-DOWNLOAD_METADATA = ":Zone.Identifier"
 
 
 @dataclass

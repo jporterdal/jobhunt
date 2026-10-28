@@ -30,6 +30,28 @@ def workers(monkeypatch):
     return started
 
 
+@pytest.fixture(autouse=True)
+def pruners(monkeypatch):
+    """Record pruner starts and stops instead of pruning."""
+    events = []
+
+    class FakePruner:
+        def __init__(self, engine, inbox, parsers):
+            self.inbox, self.parsers = inbox, parsers
+
+        def start(self):
+            events.append(("start", self))
+
+        def stop(self):
+            events.append(("stop", self))
+
+        def join(self, timeout=None):
+            events.append(("join", self))
+
+    monkeypatch.setattr("jobhunt.prune.Pruner", FakePruner)
+    return events
+
+
 @pytest.fixture
 def runs(monkeypatch):
     """Record app.run() calls instead of starting a server."""
@@ -133,3 +155,20 @@ def test_worker_not_started_in_debug_reloader_parent(monkeypatch, tmp_path, runs
     monkeypatch.setenv("WERKZEUG_RUN_MAIN", "true")
     serve(tmp_path, "--debug")  # the child the reloader starts: it serves, so it runs the worker
     assert len(workers) == 1
+
+
+def test_pruner_starts_with_the_inbox_and_stops_after_serving(tmp_path, runs, pruners):
+    serve(tmp_path, "--inbox", str(tmp_path / "in"))
+    assert [e for e, _ in pruners] == ["start", "stop", "join"]
+    pruner = pruners[0][1]
+    assert pruner.inbox == tmp_path / "in"
+    assert "posting-file" in [p.name for p in pruner.parsers]
+
+
+def test_pruner_not_started_in_debug_reloader_parent(monkeypatch, tmp_path, runs, pruners):
+    monkeypatch.delenv("WERKZEUG_RUN_MAIN", raising=False)
+    serve(tmp_path, "--debug")
+    assert pruners == []
+    monkeypatch.setenv("WERKZEUG_RUN_MAIN", "true")
+    serve(tmp_path, "--debug")
+    assert [e for e, _ in pruners] == ["start", "stop", "join"]

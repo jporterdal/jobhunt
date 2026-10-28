@@ -19,7 +19,7 @@ def schema_diff(engine, target: MetaData) -> list:
 
 
 def test_head_matches_metadata(engine):
-    assert migrate.current_revision(engine) == migrate.head_revision() == migrate.BASELINE
+    assert migrate.current_revision(engine) == migrate.head_revision() == "0011"
     assert schema_diff(engine, db.metadata) == []
 
 
@@ -64,6 +64,14 @@ def test_user_data_seeds_dismiss_reasons(engine):
 def test_downgrade_and_upgrade_again(engine):
     migrate.downgrade(engine, "base")
     assert set(inspect(engine).get_table_names()) <= {"alembic_version"}
+    init_db(engine)
+    assert schema_diff(engine, db.metadata) == []
+
+
+def test_inbox_prunes_downgrade_and_upgrade_again(engine):
+    migrate.downgrade(engine, migrate.BASELINE)
+    assert "inbox_prunes" not in inspect(engine).get_table_names()
+    assert "postings" in inspect(engine).get_table_names()
     init_db(engine)
     assert schema_diff(engine, db.metadata) == []
 

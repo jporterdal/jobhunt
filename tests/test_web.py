@@ -6,10 +6,19 @@ import shutil
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select
 
 from jobhunt import userdata
-from jobhunt.db import captures, claims, dismiss_reasons, posting_skill_marks, posting_tags, posting_triage, skills
+from jobhunt.db import (
+    captures,
+    claims,
+    dismiss_reasons,
+    inbox_prunes,
+    posting_skill_marks,
+    posting_tags,
+    posting_triage,
+    skills,
+)
 
 from .conftest import BASE_URL, add_posting, get, post, posting_file
 
@@ -283,6 +292,29 @@ def test_import_missing_inbox(client, engine, tmp_path):
 
 def test_import_is_post_only(client):
     assert get(client, "/import").status_code == 405
+
+
+def test_the_import_page_shows_the_latest_prune(client, engine, tmp_path):
+    from jobhunt import prune
+
+    (tmp_path / "inbox").mkdir()
+    prune.run(engine, tmp_path / "other", [], datetime(2026, 3, 1, 8, 0, tzinfo=UTC))  # another inbox's
+    with engine.begin() as conn:
+        for day, removed in ((1, 9), (2, 3)):
+            conn.execute(insert(inbox_prunes).values(
+                inbox=str((tmp_path / "inbox").resolve()), started_at=datetime(2026, 3, day, 9, 0, tzinfo=UTC),
+                finished_at=datetime(2026, 3, day, 9, 1, tzinfo=UTC), removed=removed, bytes=120 * 1024 * 1024,
+                problems=0, detail="[]",
+            ))
+    html = text(post(client, "/import"))
+    assert "Latest prune finished 2026-03-02 09:01 UTC: removed 3\ncompanions (120.0 MB),\n0 problems." in html
+
+
+def test_never_pruned(client, engine, tmp_path):
+    (tmp_path / "inbox").mkdir()
+    assert "Not pruned yet." in text(post(client, "/import"))
+    shutil.rmtree(tmp_path / "inbox")
+    assert "Not pruned yet." in text(post(client, "/import"))  # the "inbox not found" page too
 
 
 # --- Insights: recommendations and answers (add-recommendations 3.1, 3.2) ---

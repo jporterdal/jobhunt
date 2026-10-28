@@ -275,6 +275,18 @@ def test_rejected_file_is_set_aside_with_every_parsers_companions(engine, tmp_pa
     assert count(engine, captures) == 0
 
 
+def test_import_still_moves_discardable_companions(engine, tmp_path):
+    inbox = tmp_path / "inbox"
+    paged = FakeParser("paged", companion_suffixes=("_files",), discardable_suffixes=("_files",))
+    write(inbox, "page.html", fake_file("paged", id="9000000001"))
+    write(inbox / "page_files", "logo.png", "png")
+    [result] = import_files(engine, discover(inbox, [PARSER, paged]), inbox, [PARSER, paged])
+    assert result.outcome == "new"
+    assert sorted(p.name for p in inbox.iterdir()) == ["processed"]
+    assert sorted(p.name for p in (inbox / "processed").iterdir()) == ["page.html", "page_files"]
+    assert (inbox / "processed" / "page_files" / "logo.png").read_text() == "png"
+
+
 def test_name_collision_keeps_both(engine, tmp_path):
     inbox = tmp_path / "inbox"
     put(inbox / "processed", "innovation-lab.json", "a.json")

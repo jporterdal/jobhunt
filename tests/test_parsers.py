@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 from jobhunt import parsers
 from jobhunt.parsers.posting_file import PARSER, PostingFileParser
@@ -54,3 +55,58 @@ def test_installed_lists_the_built_in_parser():
     installed = parsers.installed()
     assert PARSER in installed.parsers
     assert parsers.label(PARSER) == "posting-file@1"
+
+
+class Marking(FakeParser):
+    """A parser whose `discardable` answers with `marks` (paths relative to the file's folder)."""
+
+    def __init__(self, companions_=(), marks=(), boom=None):
+        super().__init__("marking")
+        self.names, self.marks, self.boom = companions_, marks, boom
+
+    def companions(self, path):
+        if self.boom == "companions":
+            raise OSError("cannot list")
+        return [path.with_name(n) for n in self.names]
+
+    def discardable(self, path):
+        if self.boom == "discardable":
+            raise ValueError("broken")
+        return [path.with_name(n) for n in self.marks]
+
+
+PAGE = Path("inbox/page.html")
+
+
+def test_a_parser_marks_its_asset_folder():
+    parser = FakeParser(companion_suffixes=("_files", ".meta"), discardable_suffixes=("_files",))
+    assert parsers.discardable(parser, PAGE) == [Path("inbox/page_files")]
+
+
+def test_a_path_that_isnt_the_parsers_companion_is_not_discardable():
+    parser = Marking(companions_=["page_files"], marks=["other.html", "page_files"])
+    assert parsers.discardable(parser, PAGE) == [Path("inbox/page_files")]
+
+
+def test_download_metadata_and_the_file_itself_are_never_discardable():
+    names = ["page.html:Zone.Identifier", "page.html"]
+    assert parsers.discardable(Marking(companions_=names, marks=names), PAGE) == []
+
+
+def test_a_raising_parser_marks_nothing():
+    assert parsers.discardable(Marking(["page_files"], ["page_files"], boom="discardable"), PAGE) == []
+    assert parsers.discardable(Marking(["page_files"], ["page_files"], boom="companions"), PAGE) == []
+
+
+def test_a_parser_without_the_method_marks_nothing():
+    class Plain:
+        name, version = "plain", "1"
+
+        def parse(self, file):
+            return None
+
+        def companions(self, path):
+            return [path.with_name("page_files")]
+
+    assert parsers.discardable(Plain(), PAGE) == []
+    assert parsers.discardable(PARSER, PAGE) == []  # the built-in parser has no companions

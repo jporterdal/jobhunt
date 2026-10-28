@@ -91,7 +91,14 @@ method and the results.
 
 Put files in `inbox/` and run `jobhunt import`, or press "Import inbox" in the web interface. Every installed
 parser is tried on every file. A file is imported only when exactly one parser accepts it, and otherwise set aside
-with the reason. Files move to `inbox/processed/` or `inbox/rejected/`; nothing is deleted.
+with the reason. Files move to `inbox/processed/` or `inbox/rejected/`; the import deletes nothing.
+
+A parser can mark some of a file's companions as discardable, such as the asset folder a browser saves beside a
+page. While `jobhunt serve` runs, it deletes those from `inbox/processed/` and `inbox/rejected/` once a day and keeps
+everything else: the files themselves, their download metadata and every other companion. The first `serve` after
+upgrading deletes the folders already there; `jobhunt inbox prune --dry-run` lists them (with sizes) first, and
+`jobhunt inbox prune` prunes by hand. Deleted companions can't be restored, so back up `inbox/` first if you want
+them.
 
 The built-in parser reads **posting files**: one JSON object per posting.
 
@@ -118,7 +125,7 @@ its source and external ID, never the filename. Descriptions are sanitized when 
 
 **Other formats** are read by parser plug-ins: any installed package can register one under the `jobhunt.parsers`
 entry-point group. A parser recognises the files it reads by their contents and returns a parsed posting or a
-reason for rejecting it (see `src/jobhunt/parsers/__init__.py`).
+reason for rejecting it. [docs/parsers.md](docs/parsers.md) is the guide to writing one, with its contract changelog.
 
 ## Development
 

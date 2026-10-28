@@ -80,7 +80,7 @@ A dry run doesn't open the database. A real run calls `init_db` and records the 
 
 ### D7. Showing the latest prune
 
-`queries.latest_prune(conn, inbox)` returns the latest row or `None`. `POST /import` passes it to `import_report.html`, which shows it under the results (also on the "inbox not found" page). The page shows when the prune finished, what it removed (formatted with the existing `size` filter, `web.format_size`; the command line uses the same formatting, moved somewhere both can import), and the number of problems, or "Not pruned yet". GET handlers stay read-only. The page never prunes.
+`prune.latest(conn, inbox)` returns the latest row or `None` (the `Pruner` reads it too). `POST /import` passes it to `import_report.html`, which shows it under the results (also on the "inbox not found" page). The page shows when the prune finished, what it removed (formatted with the existing `size` filter; `format_size` moves from `web` to `units.py` so the command line uses the same formatting), and the number of problems, or "Not pruned yet". GET handlers stay read-only. The page never prunes.
 
 ### D8. Parsers outside this repository: a brief, not edits
 

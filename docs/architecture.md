@@ -38,6 +38,7 @@ flowchart LR
 | User-authored | triage, skill marks, applications, documents, the profile, saved CVs, settings | `userdata.py` | Import, re-import and model runs never touch it. |
 | Derived | posting runs and their suggestions, document runs, embeddings, link judgments | `enrich/derived.py` | A run is never edited; running again adds one. Model output is a suggestion until you accept it. |
 | Operational | `llm_jobs` | `enrich/jobs.py` | The work queue for the worker. |
+| Operational | `inbox_prunes` | `prune.py` | A record of each prune of the inbox; rows are appended. |
 
 The web interface marks each kind visually (`.src-captured`, `.src-user`, `.src-derived`), so you can always tell
 what came from a posting, what you wrote and what a model suggested.
@@ -46,10 +47,11 @@ what came from a posting, what you wrote and what a model suggested.
 
 ```
 src/jobhunt/
-    cli.py            import, serve, eval, profile reset, privacy-check, demo
+    cli.py            import, inbox prune, serve, eval, profile reset, privacy-check, demo
     parsers/          the parser plug-in protocol and the built-in posting-file parser
     sanitize.py       description HTML -> allowlisted HTML and plain text
     importer.py       every installed parser on every inbox file; one transaction per file
+    prune.py          deletes discardable companions of filed-away files; the daily Pruner thread
     store.py          the only writer of captured data
     userdata.py       the only writer of user-authored data
     queries.py        read models for every page (no Flask)
@@ -98,4 +100,6 @@ migrated schema differs from the table definitions.
 Postings arrive as files a person collects. Parsers are installed plug-ins (the `jobhunt.parsers` entry-point
 group). The importer tries every parser on every file, and a file is imported only when exactly one accepts it. A
 posting's identity is its source and external ID, never its filename. There is no crawler and no scheduled
-collection: a person starts every import.
+collection: a person starts every import. The import deletes nothing; the only deletion is the prune, which removes
+the companions a parser marks discardable once their file is in `processed/` or `rejected/`. Writing a parser:
+[parsers.md](parsers.md).
