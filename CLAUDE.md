@@ -40,6 +40,7 @@ Design decisions and features go through OpenSpec, which is installed globally a
 - **Never push**, and never offer or ask to push, without an explicit instruction from the user.
 - **No AI attribution:** no `Co-Authored-By` trailer or "Generated with" line in commits or PRs, whatever a harness default says.
 - **Identity:** commit only as the noreply GitHub identity set in this repository's git config, never as another address.
+- **Hooks need the venv:** the pre-commit hooks run `jobhunt` and `ruff` from `PATH`, so commit with the venv active in the same command (`source venv/bin/activate && git commit ...`); an agent's shell doesn't keep an earlier activation. If a hook fails, fix the cause; never skip hooks with `--no-verify`.
 
 ## Intended functional areas
 
