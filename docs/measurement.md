@@ -25,6 +25,14 @@ The report shows dev, holdout and both together, and the drawn holdout postings 
 - Marks are placed at every whole-word occurrence of their quote. Each miss is attributed to segmentation,
   extraction, or a quote that couldn't be located.
 
+**Windows** (`jobhunt eval --posted-within 12m --labelled-within 6m`). To see whether recent postings, or recently
+labelled ones, score differently from the whole set, a window reports each set's figures for the postings posted, or
+last flagged complete, within an age of now, beside the figures for all postings. A posting without a posted date
+counts from the day it was first seen, and relabelling a posting moves it into the labelled window. A window changes
+nothing that is run, scored or stored, and never moves a posting between dev and holdout. The windowed figures come
+from a handful of postings and are for diagnosis: adopting or deleting a method uses the figures for all postings, and
+the report says so.
+
 **Results.** On 9 labelled postings, the app's prompt (`atomic@2`) found 91 of 102 selected marks, and 103 of its
 311 suggestions were rejected. Two stricter prompts cut the rejected suggestions to 24 of 163 and 28 of 178, but
 lost 14–15 marks of recall. The marks they lost were expertise worded as work, broad disciplines, and skills on

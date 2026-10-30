@@ -110,6 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
         "missed skills were lost. "
         "Stored runs for the same snapshot, model and pipeline are reused; new runs are stored. "
         "Given several skill extraction methods, it reports them side by side with the marks only some found. "
+        "With --posted-within or --labelled-within it also reports the postings inside that window, beside all of "
+        "them; decisions use the figures for all postings. "
         "With --links it measures skill linking against the links you set on the links page instead.",
     )
     ev.add_argument("--model", help="model to evaluate (default: the one chosen in Settings)")
@@ -124,6 +126,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--fresh", action="store_true", help="run extraction (or link judging) again even when a stored result exists"
     )
     ev.add_argument("--json", action="store_true", help="print the report as JSON")
+    ev.add_argument(
+        "--posted-within", metavar="AGE", type=_age,
+        help="also report the postings posted within AGE of now (a positive whole number and d, w, m or y, as in 12m; "
+        "undated postings count from when first seen)",
+    )
+    ev.add_argument(
+        "--labelled-within", metavar="AGE", type=_age,
+        help="also report the postings whose labelling was last flagged complete within AGE of now; "
+        "with both options a posting must pass both",
+    )
     ev.add_argument(
         "--links", action="store_true",
         help="measure skill linking against your link overrides instead of skill extraction (development use)",
@@ -208,6 +220,16 @@ def links_registry():
     from .enrich import links
 
     return links
+
+
+def _age(text: str):
+    """argparse type for a window's age: refused with argparse's usage line, before the database is opened."""
+    from .enrich.evaluate import parse_age
+
+    try:
+        return parse_age(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -488,9 +510,15 @@ def _eval_links(args: argparse.Namespace) -> int:
 
 
 def _eval(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
     from .enrich import evaluate
 
+    windowed = args.posted_within is not None or args.labelled_within is not None
     if args.links:
+        if windowed:
+            print("error: --posted-within and --labelled-within don't apply to --links", file=sys.stderr)
+            return 1
         return _eval_links(args)
     if args.retrieval or args.judge or args.dry_run or args.all_skills:
         print("error: --retrieval, --judge, --dry-run and --all-skills need --links", file=sys.stderr)
@@ -509,6 +537,7 @@ def _eval(args: argparse.Namespace) -> int:
     if len(set(methods)) < len(methods):
         print("error: each skill extraction method may be given once", file=sys.stderr)
         return 1
+    window = evaluate.Window(args.posted_within, args.labelled_within, datetime.now(UTC)) if windowed else None
 
     engine = make_engine(args.db)
     reports = []
@@ -521,7 +550,7 @@ def _eval(args: argparse.Namespace) -> int:
         if any(p.todo for p in plans):
             client.version()  # refuse before running any method
         for p in plans:
-            reports.append(evaluate.execute(engine, client, p))
+            reports.append(evaluate.execute(engine, client, p, window))
     except evaluate.NoLabelledPostings:
         print(NO_LABELS, file=sys.stderr)
         return 1

@@ -10,13 +10,17 @@ segmenter (its text was in no required or preferred segment), the extractor (it 
 neither when its quote is gone from the latest snapshot.
 Each posting is scored on its own and the counts are summed into sets: dev, holdout (each posting's set is
 stored when its labelling is first flagged complete), and both together.
+A window (postings posted, or last flagged complete, within an age of now) adds each set's figures for the
+postings inside it beside the figures for all postings; it changes nothing that is run, scored or stored.
 """
 
 from __future__ import annotations
 
+import calendar
 import json
+import re
 from dataclasses import dataclass, field, fields
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from functools import reduce
 
 from sqlalchemy import func, select
@@ -27,6 +31,7 @@ from ..db import (
     posting_enrichments,
     posting_skill_marks,
     posting_triage,
+    postings,
     skills,
 )
 from ..queries import rejected_keys
@@ -81,6 +86,8 @@ class Labelled:
     set: str = DEV
     set_origin: str = "drawn"  # how the set was decided: drawn, chosen, moved or before-random
     first_run_at: datetime | None = None  # when the posting's first successful run (any model or pipeline) finished
+    posted_on: date | None = None  # the latest snapshot's posted date, else the day the posting was first seen
+    labelled_at: datetime | None = None  # when its labelling was last flagged complete
 
     def selected_after_run(self) -> int:
         """Selected marks created after the posting already had a successful run: suggestions may have prompted
@@ -95,8 +102,15 @@ class Labelled:
 
 def labelled_set(conn: Connection) -> list[Labelled]:
     out = []
-    for job_id, eval_set, set_origin in conn.execute(
-        select(posting_triage.c.job_id, posting_triage.c.eval_set, posting_triage.c.eval_set_origin)
+    for job_id, eval_set, set_origin, labelled_at, first_seen_at in conn.execute(
+        select(
+            posting_triage.c.job_id,
+            posting_triage.c.eval_set,
+            posting_triage.c.eval_set_origin,
+            posting_triage.c.skills_complete_at,
+            postings.c.first_seen_at,
+        )
+        .join(postings, postings.c.job_id == posting_triage.c.job_id)
         .where(posting_triage.c.skills_complete_at.is_not(None))
         .order_by(posting_triage.c.job_id)
     ).all():
@@ -132,9 +146,80 @@ def labelled_set(conn: Connection) -> list[Labelled]:
                 eval_set,
                 set_origin,
                 first_run_at,
+                snapshot.posted_on_estimate or first_seen_at.astimezone(UTC).date(),
+                labelled_at,
             )
         )
     return out
+
+
+# --- Windows ---
+
+AGE_FORMAT = "an age is a positive whole number followed by d, w, m or y, as in 12m"
+_AGE = re.compile(r"([1-9][0-9]*)([dwmy])")
+WINDOW_NOTE = "adopt or delete a method on the figures for all postings; windowed figures are for diagnosis"
+
+
+@dataclass(frozen=True)
+class Age:
+    """A span counted back from now: days, weeks, calendar months or calendar years."""
+
+    count: int
+    unit: str  # d, w, m or y
+
+    def __str__(self) -> str:
+        return f"{self.count}{self.unit}"
+
+    def before(self, now: datetime) -> datetime:
+        """The moment this age before `now`; a month back from a day the month lacks lands on its last day."""
+        if self.unit in ("d", "w"):
+            return now - timedelta(days=self.count * (7 if self.unit == "w" else 1))
+        year, month = divmod(now.year * 12 + now.month - 1 - self.count * (12 if self.unit == "y" else 1), 12)
+        month += 1
+        return now.replace(year=year, month=month, day=min(now.day, calendar.monthrange(year, month)[1]))
+
+
+def parse_age(text: str) -> Age:
+    """`12m` -> Age(12, 'm'); raises ValueError for anything else."""
+    found = _AGE.fullmatch(text)
+    if found is None:
+        raise ValueError(AGE_FORMAT)
+    return Age(int(found[1]), found[2])
+
+
+@dataclass(frozen=True)
+class Window:
+    """The labelled postings posted on or after `posted_since` and last flagged complete at or after
+    `labelled_since`; a test applies only when its age is given."""
+
+    posted_within: Age | None
+    labelled_within: Age | None
+    now: datetime
+
+    @property
+    def posted_since(self) -> date | None:
+        return None if self.posted_within is None else self.posted_within.before(self.now).astimezone(UTC).date()
+
+    @property
+    def labelled_since(self) -> datetime | None:
+        return None if self.labelled_within is None else self.labelled_within.before(self.now)
+
+    def contains(self, posting: Labelled) -> bool:
+        posted, labelled = self.posted_since, self.labelled_since
+        return (posted is None or posting.posted_on >= posted) and (
+            labelled is None or posting.labelled_at >= labelled
+        )
+
+    def describe(self) -> str:
+        parts = []
+        if self.posted_within is not None:
+            parts.append(f"posted within {self.posted_within} (since {self.posted_since.isoformat()})")
+        if self.labelled_within is not None:
+            parts.append(
+                f"labelled within {self.labelled_within} "
+                f"(since {self.labelled_since.astimezone(UTC):%Y-%m-%d %H:%M} UTC)"
+            )
+        return ", ".join(parts)
 
 
 def reusable_run(conn: Connection, snapshot_id: int, model: str, pipeline: str) -> int | None:
@@ -359,20 +444,38 @@ class Report:
     reused_runs: int
     postings: list[PostingResult]
     skills: str = ""
+    window: Window | None = None
 
     @property
     def counts(self) -> Counts:
         return total(p.counts for p in self.postings)
 
+    def _show_drawn(self) -> bool:
+        holdout = [p for p in self.postings if p.posting.set == HOLDOUT]
+        return any(p.posting.set_origin != "drawn" for p in holdout)
+
     def sets(self) -> list[tuple[str, int, Counts]]:
         """(name, labelled postings, counts) for dev, holdout, the drawn holdout postings alone when some holdout
         postings weren't drawn, and together."""
-        dev = [p for p in self.postings if p.posting.set == DEV]
-        holdout = [p for p in self.postings if p.posting.set == HOLDOUT]
-        drawn = [p for p in holdout if p.posting.set_origin == "drawn"]
-        groups = [(DEV, dev), (HOLDOUT, holdout)] + ([(HOLDOUT_DRAWN, drawn)] if len(drawn) < len(holdout) else [])
-        return [(name, len(members), total(p.counts for p in members)) for name, members in groups] + [
-            ("together", len(self.postings), self.counts)
+        return _set_rows(_groups(self.postings, self._show_drawn()))
+
+    def in_window(self, result: PostingResult) -> bool:
+        return self.window is None or self.window.contains(result.posting)
+
+    def windowed_sets(self) -> list[tuple[str, int, Counts]]:
+        """The rows of sets(), in the same order, over the postings inside the window."""
+        return _set_rows(_groups([p for p in self.postings if self.in_window(p)], self._show_drawn()))
+
+    def window_lines(self) -> list[str]:
+        """The window and the note, for a text header; none without a window."""
+        if self.window is None:
+            return []
+        inside = sum(map(self.in_window, self.postings))
+        return [
+            f"window:   {self.window.describe()}",
+            f"          {inside} of {len(self.postings)} labelled postings inside, "
+            f"{len(self.postings) - inside} left out",
+            f"note:     {WINDOW_NOTE}",
         ]
 
     def to_dict(self) -> dict:
@@ -383,12 +486,24 @@ class Report:
             "new_runs": self.new_runs,
             "reused_runs": self.reused_runs,
             **_summary(self.counts),
-            "sets": {
-                {HOLDOUT_DRAWN: "holdout_drawn"}.get(name, name): {"labelled": size, **_summary(counts)}
-                for name, size, counts in self.sets()[:-1]
-            },
+            "sets": _sets_dict(self.sets()),
         }
-        out["per_posting"] = [p.to_dict() for p in self.postings]
+        if self.window is None:
+            out["per_posting"] = [p.to_dict() for p in self.postings]
+            return out
+        w, inside = self.window, sum(map(self.in_window, self.postings))
+        out["window"] = {
+            "posted_within": None if w.posted_within is None else str(w.posted_within),
+            "posted_since": None if w.posted_since is None else w.posted_since.isoformat(),
+            "labelled_within": None if w.labelled_within is None else str(w.labelled_within),
+            "labelled_since": None if w.labelled_since is None else w.labelled_since.astimezone(UTC).isoformat(),
+            "inside": inside,
+            "left_out": len(self.postings) - inside,
+            "note": WINDOW_NOTE,
+        }
+        windowed = self.windowed_sets()
+        out["windowed"] = {**_summary(windowed[-1][2]), "sets": _sets_dict(windowed)}
+        out["per_posting"] = [{**p.to_dict(), "in_window": self.in_window(p)} for p in self.postings]
         return out
 
     def format_text(self) -> str:
@@ -397,9 +512,38 @@ class Report:
             f"pipeline: {self.pipeline}",
             f"runs:     {self.new_runs} new, {self.reused_runs} reused",
         ]
-        for name, size, counts in self.sets():
-            lines += ["", f"{name}: {size} labelled postings, {counts.postings} scored"] + _block(_summary(counts))
+        if self.window is None:
+            for name, size, counts in self.sets():
+                lines += ["", f"{name}: {size} labelled postings, {counts.postings} scored"] + _block(_summary(counts))
+            return "\n".join(lines)
+        lines += self.window_lines()
+        for (name, size, counts), (_, inside, windowed) in zip(self.sets(), self.windowed_sets(), strict=True):
+            lines += [""] + _table(
+                f"{name}: {size} labelled postings, {inside} in window",
+                ["all", "in window"],
+                [_summary(counts), _summary(windowed)],
+            )
         return "\n".join(lines)
+
+
+def _groups(results: list[PostingResult], show_drawn: bool) -> list[tuple[str, list[PostingResult]]]:
+    """Dev, holdout, the drawn holdout postings alone when `show_drawn`, and together."""
+    dev = [p for p in results if p.posting.set == DEV]
+    holdout = [p for p in results if p.posting.set == HOLDOUT]
+    drawn = [p for p in holdout if p.posting.set_origin == "drawn"]
+    return [(DEV, dev), (HOLDOUT, holdout)] + ([(HOLDOUT_DRAWN, drawn)] if show_drawn else []) + [("together", results)]
+
+
+def _set_rows(groups: list[tuple[str, list[PostingResult]]]) -> list[tuple[str, int, Counts]]:
+    return [(name, len(members), total(p.counts for p in members)) for name, members in groups]
+
+
+def _sets_dict(rows: list[tuple[str, int, Counts]]) -> dict:
+    """Every row but together, by JSON name."""
+    return {
+        {HOLDOUT_DRAWN: "holdout_drawn"}.get(name, name): {"labelled": size, **_summary(counts)}
+        for name, size, counts in rows[:-1]
+    }
 
 
 def _ratio(num: int, den: int) -> dict:
@@ -503,8 +647,8 @@ def plan(
         return Plan(model, skills, steps, pipeline, get_setting(conn, "llm.num_ctx"), labelled, reuse)
 
 
-def execute(engine: Engine, client, plan: Plan) -> Report:
-    """Run the plan's missing runs, then score every labelled posting.
+def execute(engine: Engine, client, plan: Plan, window: Window | None = None) -> Report:
+    """Run the plan's missing runs, then score every labelled posting; a window only adds figures to the report.
 
     Raises Unreachable when runs are needed and Ollama can't be reached. New runs are saved in one transaction
     after all of them finished, so an interrupted evaluation writes nothing.
@@ -536,7 +680,7 @@ def execute(engine: Engine, client, plan: Plan) -> Report:
             else:
                 counts.failures += 1
             out.append(PostingResult(posting, run.status, counts, detail))
-    return Report(plan.model, plan.pipeline, len(todo), len(plan.labelled) - len(todo), out, plan.skills)
+    return Report(plan.model, plan.pipeline, len(todo), len(plan.labelled) - len(todo), out, plan.skills, window)
 
 
 def evaluate(
@@ -563,9 +707,11 @@ def report_json(report: Report) -> str:
 
 
 def differences(reports: list[Report]) -> list[dict]:
-    """Selected marks that some of the methods match and others don't, per posting, naming the methods that do."""
+    """Selected marks that some of the methods match and others don't, per posting, naming the methods that do;
+    with a window, each says whether its posting is inside it."""
     out = []
     by_job = [{p.posting.job_id: p for p in r.postings} for r in reports]
+    windowed = reports[0].window is not None
     for result in reports[0].postings:
         posting = result.posting
         for i, mark in enumerate(posting.marks):
@@ -586,6 +732,7 @@ def differences(reports: list[Report]) -> list[dict]:
                         "importance": mark.importance,
                         "quote": mark.quote,
                         "matched_by": matched_by,
+                        **({"in_window": reports[0].in_window(result)} if windowed else {}),
                     }
                 )
     return out
@@ -613,25 +760,39 @@ _ROWS = [
 ]
 
 
+def _table(heading: str, columns: list[str], summaries: list[dict]) -> list[str]:
+    """One set's figures, a column per summary."""
+    width = max(16, *(len(c) for c in columns))
+    lines = [f"{heading:<22}" + "".join(f"{c:>{width}}" for c in columns)]
+    for label, cell in _ROWS:
+        lines.append(f"{label:<22}" + "".join(f"{cell(s):>{width}}" for s in summaries))
+    return lines
+
+
 def comparison_text(reports: list[Report]) -> str:
-    """Each method's figures side by side, per set, then the mark differences."""
+    """Each method's figures side by side, per set (and, with a window, inside it), then the mark differences."""
     width = max(16, *(len(r.skills) for r in reports))
+    methods = [r.skills for r in reports]
     lines = [f"model:    {reports[0].model}"]
     lines += [f"{r.skills:<{width}} {r.pipeline}  ({r.new_runs} new, {r.reused_runs} reused runs)" for r in reports]
+    lines += reports[0].window_lines()
     per_method = [r.sets() for r in reports]
+    windowed = [r.windowed_sets() for r in reports] if reports[0].window is not None else None
     for k, (name, size, _) in enumerate(per_method[0]):
-        heading = f"{name}: {size} labelled postings"
-        lines += ["", f"{heading:<22}" + "".join(f"{r.skills:>{width}}" for r in reports)]
-        summaries = [_summary(sets[k][2]) for sets in per_method]
-        for label, cell in _ROWS:
-            lines.append(f"{label:<22}" + "".join(f"{cell(s):>{width}}" for s in summaries))
+        lines += [""] + _table(f"{name}: {size} labelled postings", methods, [_summary(s[k][2]) for s in per_method])
+        if windowed is not None:
+            inside = windowed[0][k][1]
+            lines += [""] + _table(
+                f"{name}, in window: {inside} labelled postings", methods, [_summary(s[k][2]) for s in windowed]
+            )
     diffs = differences(reports)
     lines += ["", f"selected marks matched by some methods only: {len(diffs) or 'none'}"]
     current = None
     for d in diffs:
         if d["job_id"] != current:
             current = d["job_id"]
-            lines.append(f"  {d['job_id']}  {d['title']} ({d['set']})")
+            outside = " (outside window)" if d.get("in_window") is False else ""
+            lines.append(f"  {d['job_id']}  {d['title']} ({d['set']}){outside}")
         importance = f" ({d['importance']})" if d["importance"] else ""
         lines.append(f"    {d['name']}{importance} “{d['quote']}”: {', '.join(d['matched_by'])}")
     return "\n".join(lines)

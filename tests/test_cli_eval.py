@@ -209,3 +209,53 @@ def test_one_method_from_the_option(db_url, fake_client, capsys, candidate):
     assert main(["eval", "--db", db_url, "--skills", "atomic@5", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert "skills=atomic@5" in report["pipeline"] and "methods" not in report
+
+
+# --- Windows ---
+
+def test_windowed_run(db_url, fake_client, capsys):
+    labelled(db_url)  # labelled now, posted 2026-09-14
+    assert main(["eval", "--db", db_url, "--labelled-within", "6m", "--posted-within", "1d"]) == 0
+    out = capsys.readouterr().out
+    assert "window:   posted within 1d (since " in out and ", labelled within 6m (since " in out
+    assert "0 of 1 labelled postings inside, 1 left out" in out
+    assert "dev: 1 labelled postings, 0 in window" in out and "note:     adopt or delete a method" in out
+    recall = next(line for line in out.splitlines() if line.startswith("recall all"))  # the dev set's
+    assert recall.split()[-4:] == ["80%", "(4/5)", "n/a", "(0/0)"]  # all, in window
+
+    assert main(["eval", "--db", db_url, "--labelled-within", "6m", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["window"]["labelled_within"] == "6m" and report["window"]["inside"] == 1
+    assert report["windowed"]["recall"] == report["recall"]
+    assert [p["in_window"] for p in report["per_posting"]] == [True]
+
+
+@pytest.mark.parametrize(("option", "age"), [("--posted-within", "12months"), ("--labelled-within", "0d")])
+def test_malformed_age(db_url, fake_client, capsys, option, age):
+    labelled(db_url)
+    with pytest.raises(SystemExit) as exit_:
+        main(["eval", "--db", db_url, option, age])
+    assert exit_.value.code != 0
+    assert "an age is a positive whole number followed by d, w, m or y" in capsys.readouterr().err
+    assert fake_client.requests == [] and runs(db_url) == 0
+
+
+def test_window_with_links_refused(db_url, fake_client, capsys):
+    assert main(["eval", "--links", "--posted-within", "12m", "--db", db_url]) == 1
+    assert "--posted-within and --labelled-within don't apply to --links" in capsys.readouterr().err
+    assert fake_client.requests == []
+
+
+def test_comparing_methods_with_a_window(db_url, fake_client, capsys, candidate):
+    labelled(db_url)
+    stored_runs(db_url)
+    args = ["eval", "--db", db_url, "--skills", "atomic@2,atomic@5", "--posted-within", "1d"]
+    assert main(args) == 0
+    assert fake_client.requests == []
+    out = capsys.readouterr().out
+    assert "dev, in window: 0 labelled postings" in out and "together, in window: 0 labelled postings" in out
+    assert any(line.startswith(f"  {JOB}  ") and line.endswith("(dev) (outside window)") for line in out.splitlines())
+    assert main(args + ["--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert [m["window"]["left_out"] for m in report["methods"]] == [1, 1]
+    assert [d["in_window"] for d in report["differences"]] == [False]

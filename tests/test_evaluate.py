@@ -1,7 +1,7 @@
 """Evaluation: labelled set, matching, metrics and miss attribution, run reuse."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import func, select, update
@@ -9,7 +9,7 @@ from sqlalchemy import func, select, update
 from jobhunt import userdata
 from jobhunt.db import enrichment_skills, posting_enrichments, posting_triage, rejected_suggestions
 from jobhunt.enrich import evaluate
-from jobhunt.enrich.evaluate import Counts, Labelled, Mark, Suggestion
+from jobhunt.enrich.evaluate import Age, Counts, Labelled, Mark, Suggestion, Window, parse_age
 from jobhunt.enrich.pipeline import Unreachable
 
 from .conftest import CANDIDATE_SYSTEM, PIPELINE, add_posting, add_run
@@ -606,3 +606,233 @@ def test_evaluate_with_a_skill_method(db, candidate):
 def test_skill_method_defaults_to_the_apps(db, candidate):
     label(db)
     assert "skills=atomic@2" in evaluate.evaluate(db, eval_llm()).pipeline
+
+
+# --- Windows ---
+
+NOW = datetime(2026, 10, 30, 14, 2, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("text", "before"),
+    [
+        ("7d", datetime(2026, 10, 23, 14, 2, tzinfo=UTC)),
+        ("2w", datetime(2026, 10, 16, 14, 2, tzinfo=UTC)),
+        ("12m", datetime(2025, 10, 30, 14, 2, tzinfo=UTC)),
+        ("1y", datetime(2025, 10, 30, 14, 2, tzinfo=UTC)),
+        ("10m", datetime(2025, 12, 30, 14, 2, tzinfo=UTC)),
+    ],
+)
+def test_ages(text, before):
+    age = parse_age(text)
+    assert str(age) == text and age.before(NOW) == before
+
+
+@pytest.mark.parametrize(("year", "day"), [(2024, 29), (2026, 28)])
+def test_a_month_back_from_a_day_the_month_lacks(year, day):
+    assert Age(1, "m").before(datetime(year, 3, 31, 9, 0, tzinfo=UTC)) == datetime(year, 2, day, 9, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("text", ["0d", "12months", "-1m", "1.5y", "m", "12", "12m\n", " 12m", "012m", ""])
+def test_malformed_ages(text):
+    with pytest.raises(ValueError, match="positive whole number followed by d, w, m or y"):
+        parse_age(text)
+
+
+def test_labelled_set_reads_posted_and_labelled_dates(db):
+    undated = add_posting(
+        db, description_text=TEXT, external_id="9000000003", posted_on=None, posted_precision=None,
+        captured_at=datetime(2026, 10, 10, 20, 30, tzinfo=timezone(timedelta(hours=-5))),
+    )
+    label_at(db, JOB, [("Python", "Python")], T1)
+    label_at(db, undated, [("Python", "Python")], T1)
+    write(db, userdata.set_skills_complete, undated, False, now=T2)
+    write(db, userdata.set_skills_complete, undated, True, now=T4)
+    with db.connect() as conn:
+        dates = {p.job_id: (p.posted_on, p.labelled_at) for p in evaluate.labelled_set(conn)}
+    assert dates == {
+        JOB: (date(2026, 9, 14), T1),  # the posting file's posted date
+        undated: (date(2026, 10, 11), T4),  # first seen 2026-10-11 01:30 UTC; the latest flagging
+    }
+
+
+def dated(posted_on, labelled_at):
+    return Labelled(JOB, "t", 1, TEXT, [], posted_on=posted_on, labelled_at=labelled_at)
+
+
+LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def test_posted_window():
+    window = Window(Age(12, "m"), None, NOW)
+    assert (window.posted_since, window.labelled_since) == (date(2025, 10, 30), None)
+    assert window.contains(dated(date(2025, 10, 30), LONG_AGO))  # the boundary day is kept
+    assert not window.contains(dated(date(2025, 10, 29), NOW))
+
+
+def test_labelled_window():
+    window = Window(None, Age(6, "m"), NOW)
+    since = datetime(2026, 4, 30, 14, 2, tzinfo=UTC)
+    assert (window.posted_since, window.labelled_since) == (None, since)
+    assert window.contains(dated(date(2000, 1, 1), since))  # the boundary moment is kept
+    assert not window.contains(dated(NOW.date(), since - timedelta(seconds=1)))
+
+
+def test_both_windows_must_pass():
+    window = Window(Age(12, "m"), Age(6, "m"), NOW)
+    assert window.contains(dated(date(2026, 1, 1), datetime(2026, 9, 1, tzinfo=UTC)))
+    assert not window.contains(dated(date(2026, 1, 1), datetime(2026, 1, 1, tzinfo=UTC)))
+    assert not window.contains(dated(date(2025, 1, 1), datetime(2026, 9, 1, tzinfo=UTC)))
+    assert window.describe() == (
+        "posted within 12m (since 2025-10-30), labelled within 6m (since 2026-04-30 14:02 UTC)"
+    )
+
+
+def windowed(engine, posted=None, labelled=None, now=NOW):
+    window = Window(posted and parse_age(posted), labelled and parse_age(labelled), now)
+    return evaluate.execute(engine, FakeLLM(unreachable=True), evaluate.plan(engine), window)
+
+
+def holdout_outside(db):
+    """JOB in holdout, labelled at T1; OTHER in dev, labelled at T4. A 27-day labelled window keeps OTHER only."""
+    sets_db(db)
+    put_set(db, JOB, "holdout")
+    put_set(db, OTHER, "dev")
+    return windowed(db, labelled="27d")
+
+
+def test_a_holdout_posting_outside_the_window(db):
+    report = holdout_outside(db)
+    plain = evaluate.evaluate(db, FakeLLM(unreachable=True))
+    assert set_rows(report) == set_rows(plain) == [
+        ("dev", 1, 1, 1, 1),
+        ("holdout", 1, 1, 1, 2),
+        ("together", 2, 2, 2, 3),
+    ]
+    assert [(name, size, c.postings) for name, size, c in report.windowed_sets()] == [
+        ("dev", 1, 1),
+        ("holdout", 0, 0),
+        ("together", 1, 1),
+    ]
+    with db.connect() as conn:
+        assert {p.job_id: p.set for p in evaluate.labelled_set(conn)} == {JOB: "holdout", OTHER: "dev"}
+
+
+def test_windowed_rows_follow_the_full_rows(db):
+    sets_db(db, "chosen")  # OTHER is a holdout posting that wasn't drawn: the drawn row shows, empty
+    report = windowed(db, labelled="27d")
+    assert [name for name, _, _ in report.windowed_sets()] == [name for name, _, _ in report.sets()] == [
+        "dev", "holdout", "holdout (drawn)", "together",
+    ]
+
+
+def test_text_without_a_window_is_unchanged(db):
+    sets_db(db)
+    report = evaluate.evaluate(db, FakeLLM(unreachable=True))
+    expected = [
+        f"model:    {report.model}",
+        f"pipeline: {report.pipeline}",
+        f"runs:     {report.new_runs} new, {report.reused_runs} reused",
+    ]
+    for name, size, counts in report.sets():  # the report as it was before windows
+        expected += ["", f"{name}: {size} labelled postings, {counts.postings} scored"]
+        expected += evaluate._block(evaluate._summary(counts))
+    assert report.format_text() == "\n".join(expected)
+    assert "window" not in report.format_text() and "note:" not in report.format_text()
+
+
+def test_windowed_text(db):
+    text = holdout_outside(db).format_text()
+    lines = text.splitlines()
+    assert "window:   labelled within 27d (since 2026-10-03 14:02 UTC)" in lines
+    assert "          1 of 2 labelled postings inside, 1 left out" in lines
+    assert f"note:     {evaluate.WINDOW_NOTE}" in lines
+    heading = next(line for line in lines if line.startswith("holdout: "))
+    assert heading.startswith("holdout: 1 labelled postings, 0 in window") and heading.split()[-2:] == ["in", "window"]
+    recall = [line for line in lines if line.startswith("recall all")]
+    assert len(recall) == 3  # dev, holdout, together
+    assert recall[1].split()[-4:] == ["50%", "(1/2)", "n/a", "(0/0)"]  # holdout: all, then in window
+    assert "selected after a run" in text
+
+
+def test_empty_window(db):
+    sets_db(db)
+    report = windowed(db, labelled="7d", now=datetime(2027, 6, 1, tzinfo=UTC))
+    lines = report.format_text().splitlines()
+    assert "          0 of 2 labelled postings inside, 2 left out" in lines
+    assert "together: 2 labelled postings, 0 in window" in "\n".join(lines)
+    together = lines[next(i for i, line in enumerate(lines) if line.startswith("together:")):]
+    assert next(line for line in together if line.startswith("recall all")).endswith("n/a (0/0)")
+    assert next(line for line in together if line.startswith("postings scored")).endswith(" 0")
+    summary = report.to_dict()
+    assert summary["window"]["inside"] == 0 and summary["windowed"]["recall"]["all"]["ratio"] is None
+
+
+PLAIN_KEYS = [
+    "model", "pipeline", "skills", "new_runs", "reused_runs", "postings", "failures", "precision", "unjudged",
+    "wrong_by_reason", "recall", "importance_agreement", "segment_recall", "misses", "selected_after_run",
+    "mean_run_seconds", "sets", "per_posting",
+]
+
+
+def test_json_without_a_window_is_unchanged(db):
+    sets_db(db)
+    summary = evaluate.evaluate(db, FakeLLM(unreachable=True)).to_dict()
+    assert list(summary) == PLAIN_KEYS
+    assert list(summary["per_posting"][0]) == [
+        "job_id", "title", "set", "set_origin", "status", "selected_after_run", "missed", "wrong", "unjudged",
+    ]
+
+
+def test_windowed_json(db):
+    windowed_summary = json.loads(evaluate.report_json(holdout_outside(db)))
+    plain = json.loads(evaluate.report_json(evaluate.evaluate(db, FakeLLM(unreachable=True))))
+    assert list(windowed_summary) == PLAIN_KEYS[:-1] + ["window", "windowed", "per_posting"]
+    assert {k: windowed_summary[k] for k in PLAIN_KEYS[:-1]} == {k: plain[k] for k in PLAIN_KEYS[:-1]}
+    assert windowed_summary["window"] == {
+        "posted_within": None,
+        "posted_since": None,
+        "labelled_within": "27d",
+        "labelled_since": "2026-10-03T14:02:00+00:00",
+        "inside": 1,
+        "left_out": 1,
+        "note": evaluate.WINDOW_NOTE,
+    }
+    inner = windowed_summary["windowed"]
+    assert inner["postings"] == 1 and inner["recall"]["all"] == {"count": 1, "of": 1, "ratio": 1.0}
+    assert set(inner["sets"]) == {"dev", "holdout"} and inner["sets"]["holdout"]["labelled"] == 0
+    assert [(p["job_id"], p.pop("in_window")) for p in windowed_summary["per_posting"]] == [
+        (JOB, False),
+        (OTHER, True),
+    ]
+    assert windowed_summary["per_posting"] == plain["per_posting"]
+
+
+def test_windowed_comparison(db, candidate):
+    from .conftest import CANDIDATE_PIPELINE
+
+    holdout_outside(db)
+    # atomic@5 (stored eval runs) finds nothing on JOB, so JOB's Python mark is matched by atomic@2 only
+    add_run(db, JOB, skills=[], pipeline=CANDIDATE_PIPELINE, origin="eval")
+    add_run(db, OTHER, skills=[("Python", "required", "Python")], pipeline=CANDIDATE_PIPELINE, origin="eval")
+    window = Window(None, Age(27, "d"), NOW)
+    llm = FakeLLM(unreachable=True)
+    reports = [evaluate.execute(db, llm, evaluate.plan(db, skills=s), window) for s in ("atomic@2", "atomic@5")]
+    assert llm.requests == []
+    lines = evaluate.comparison_text(reports).splitlines()
+    assert f"note:     {evaluate.WINDOW_NOTE}" in lines
+    headings = [line.split("  ")[0] for line in lines if "labelled postings" in line and line[0] != " "]
+    assert headings == [
+        "dev: 1 labelled postings",
+        "dev, in window: 1 labelled postings",
+        "holdout: 1 labelled postings",
+        "holdout, in window: 0 labelled postings",
+        "together: 2 labelled postings",
+        "together, in window: 1 labelled postings",
+    ]
+    recall = [line.split()[-4:] for line in lines if line.startswith("recall all")]
+    assert recall[2:4] == [["50%", "(1/2)", "0%", "(0/2)"], ["n/a", "(0/0)", "n/a", "(0/0)"]]  # holdout, then inside
+    assert any(line.startswith(f"  {JOB}  ") and line.endswith("(holdout) (outside window)") for line in lines)
+    report = json.loads(evaluate.comparison_json(reports))
+    assert [d["in_window"] for d in report["differences"]] == [False]
+    assert all("windowed" in m and "window" in m for m in report["methods"])
