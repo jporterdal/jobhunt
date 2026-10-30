@@ -114,6 +114,8 @@ posting_triage = Table(
     Column("updated_at", UTCDateTime, nullable=False),
     Column("skills_complete_at", UTCDateTime),  # set when the user has marked every skill the posting asks for
     Column("skills_first_complete_at", UTCDateTime),  # the first time the flag was set; never cleared
+    Column("eval_set", Text),  # 'dev' or 'holdout', decided at the first flagging (userdata.EVAL_SETS)
+    Column("eval_set_origin", Text),  # 'drawn', 'chosen', 'moved' or 'before-random' (userdata.EVAL_SET_ORIGINS)
 )
 
 tags = Table(
@@ -194,7 +196,7 @@ rejected_suggestions = Table(
     PrimaryKeyConstraint("job_id", "skill_key"),
 )
 
-# Keys: llm.model, llm.num_ctx, llm.segmenter, llm.embed_model, eval.holdout_start, demo.created_at; defaults and
+# Keys: llm.model, llm.num_ctx, llm.segmenter, llm.embed_model, eval.holdout_share, demo.created_at; defaults and
 # validation live in userdata.py.
 app_settings = Table(
     "app_settings",

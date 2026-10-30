@@ -8,8 +8,8 @@ Suggestions match marks by skill key first, then by overlapping text, where a ma
 whole-word occurrence. Every selected mark no suggestion matches is put down to the step that lost it: the
 segmenter (its text was in no required or preferred segment), the extractor (it was, but nothing matched), or
 neither when its quote is gone from the latest snapshot.
-Each posting is scored on its own and the counts are summed into sets: once the user starts a held-out set,
-postings first flagged complete after the start are held out, the rest are development postings.
+Each posting is scored on its own and the counts are summed into sets: dev, holdout (each posting's set is
+stored when its labelling is first flagged complete), and both together.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from ..db import (
     posting_triage,
     skills,
 )
-from ..queries import held_out, rejected_keys
+from ..queries import rejected_keys
 from ..store import latest_snapshot
 from ..userdata import get_setting
 from . import derived, validate
@@ -67,7 +67,8 @@ class Mark:
     created_at: datetime | None = None
 
 
-DEVELOPMENT, HELD_OUT = "development", "held-out"
+DEV, HOLDOUT = "dev", "holdout"
+HOLDOUT_DRAWN = "holdout (drawn)"  # the holdout postings whose set was drawn, shown when some weren't
 
 
 @dataclass
@@ -77,7 +78,8 @@ class Labelled:
     snapshot_id: int
     text: str
     marks: list[Mark]
-    set: str = DEVELOPMENT
+    set: str = DEV
+    set_origin: str = "drawn"  # how the set was decided: drawn, chosen, moved or before-random
     first_run_at: datetime | None = None  # when the posting's first successful run (any model or pipeline) finished
 
     def selected_after_run(self) -> int:
@@ -92,10 +94,9 @@ class Labelled:
 
 
 def labelled_set(conn: Connection) -> list[Labelled]:
-    start = get_setting(conn, "eval.holdout_start")
     out = []
-    for job_id, first_complete in conn.execute(
-        select(posting_triage.c.job_id, posting_triage.c.skills_first_complete_at)
+    for job_id, eval_set, set_origin in conn.execute(
+        select(posting_triage.c.job_id, posting_triage.c.eval_set, posting_triage.c.eval_set_origin)
         .where(posting_triage.c.skills_complete_at.is_not(None))
         .order_by(posting_triage.c.job_id)
     ).all():
@@ -128,7 +129,8 @@ def labelled_set(conn: Connection) -> list[Labelled]:
                 snapshot.id,
                 snapshot.description_text,
                 marks,
-                HELD_OUT if held_out(first_complete, start) else DEVELOPMENT,
+                eval_set,
+                set_origin,
                 first_run_at,
             )
         )
@@ -340,6 +342,7 @@ class PostingResult:
             "job_id": self.posting.job_id,
             "title": self.posting.title,
             "set": self.posting.set,
+            "set_origin": self.posting.set_origin,
             "status": self.status,
             "selected_after_run": self.counts.selected_after_run,
             "missed": self.detail.missed,
@@ -356,21 +359,21 @@ class Report:
     reused_runs: int
     postings: list[PostingResult]
     skills: str = ""
-    holdout_start: datetime | None = None
 
     @property
     def counts(self) -> Counts:
         return total(p.counts for p in self.postings)
 
     def sets(self) -> list[tuple[str, int, Counts]]:
-        """(name, labelled postings, counts) for each set; one set ("all") until a held-out set is started."""
-        if self.holdout_start is None:
-            return [("all", len(self.postings), self.counts)]
-        out = []
-        for name in (DEVELOPMENT, HELD_OUT):
-            members = [p for p in self.postings if p.posting.set == name]
-            out.append((name, len(members), total(p.counts for p in members)))
-        return out + [("together", len(self.postings), self.counts)]
+        """(name, labelled postings, counts) for dev, holdout, the drawn holdout postings alone when some holdout
+        postings weren't drawn, and together."""
+        dev = [p for p in self.postings if p.posting.set == DEV]
+        holdout = [p for p in self.postings if p.posting.set == HOLDOUT]
+        drawn = [p for p in holdout if p.posting.set_origin == "drawn"]
+        groups = [(DEV, dev), (HOLDOUT, holdout)] + ([(HOLDOUT_DRAWN, drawn)] if len(drawn) < len(holdout) else [])
+        return [(name, len(members), total(p.counts for p in members)) for name, members in groups] + [
+            ("together", len(self.postings), self.counts)
+        ]
 
     def to_dict(self) -> dict:
         out = {
@@ -380,13 +383,11 @@ class Report:
             "new_runs": self.new_runs,
             "reused_runs": self.reused_runs,
             **_summary(self.counts),
-            "holdout_start": self.holdout_start.isoformat() if self.holdout_start else None,
+            "sets": {
+                {HOLDOUT_DRAWN: "holdout_drawn"}.get(name, name): {"labelled": size, **_summary(counts)}
+                for name, size, counts in self.sets()[:-1]
+            },
         }
-        if self.holdout_start is not None:
-            out["sets"] = {
-                name.replace("-", "_"): {"labelled": size, **_summary(counts)}
-                for name, size, counts in self.sets()[:2]
-            }
         out["per_posting"] = [p.to_dict() for p in self.postings]
         return out
 
@@ -396,12 +397,7 @@ class Report:
             f"pipeline: {self.pipeline}",
             f"runs:     {self.new_runs} new, {self.reused_runs} reused",
         ]
-        sets = self.sets()
-        if len(sets) == 1:
-            lines += [f"postings: {self.counts.postings} scored", ""] + _block(_summary(self.counts))
-            return "\n".join(lines)
-        lines.append(f"held-out set started {self.holdout_start:%Y-%m-%d %H:%M} UTC")
-        for name, size, counts in sets:
+        for name, size, counts in self.sets():
             lines += ["", f"{name}: {size} labelled postings, {counts.postings} scored"] + _block(_summary(counts))
         return "\n".join(lines)
 
@@ -475,7 +471,6 @@ class Plan:
     num_ctx: int
     labelled: list[Labelled]
     reuse: dict[str, int | None]
-    holdout_start: datetime | None
 
     @property
     def todo(self) -> list[Labelled]:
@@ -505,10 +500,7 @@ def plan(
         reuse = {
             p.job_id: None if fresh else reusable_run(conn, p.snapshot_id, model, pipeline) for p in labelled
         }
-        return Plan(
-            model, skills, steps, pipeline, get_setting(conn, "llm.num_ctx"), labelled, reuse,
-            get_setting(conn, "eval.holdout_start"),
-        )
+        return Plan(model, skills, steps, pipeline, get_setting(conn, "llm.num_ctx"), labelled, reuse)
 
 
 def execute(engine: Engine, client, plan: Plan) -> Report:
@@ -544,9 +536,7 @@ def execute(engine: Engine, client, plan: Plan) -> Report:
             else:
                 counts.failures += 1
             out.append(PostingResult(posting, run.status, counts, detail))
-    return Report(
-        plan.model, plan.pipeline, len(todo), len(plan.labelled) - len(todo), out, plan.skills, plan.holdout_start
-    )
+    return Report(plan.model, plan.pipeline, len(todo), len(plan.labelled) - len(todo), out, plan.skills)
 
 
 def evaluate(
@@ -624,13 +614,13 @@ _ROWS = [
 
 
 def comparison_text(reports: list[Report]) -> str:
-    """Each method's figures side by side (per set once a held-out set is started), then the mark differences."""
+    """Each method's figures side by side, per set, then the mark differences."""
     width = max(16, *(len(r.skills) for r in reports))
     lines = [f"model:    {reports[0].model}"]
     lines += [f"{r.skills:<{width}} {r.pipeline}  ({r.new_runs} new, {r.reused_runs} reused runs)" for r in reports]
     per_method = [r.sets() for r in reports]
     for k, (name, size, _) in enumerate(per_method[0]):
-        heading = "" if len(per_method[0]) == 1 else f"{name}: {size} labelled postings"
+        heading = f"{name}: {size} labelled postings"
         lines += ["", f"{heading:<22}" + "".join(f"{r.skills:>{width}}" for r in reports)]
         summaries = [_summary(sets[k][2]) for sets in per_method]
         for label, cell in _ROWS:

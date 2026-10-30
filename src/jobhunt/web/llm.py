@@ -79,9 +79,10 @@ def _settings_context(conn, error: str | None = None) -> dict:
         offline=offline,
         segmenters=list(segmenters()),
         skills_method=CURRENT_SKILLS,
-        labelled=queries.labelled_sets(conn),
+        eval_sets=queries.eval_set_counts(conn),
         ollama_url=client.url if client is not None else None,
         num_ctx_range=userdata.NUM_CTX_RANGE,
+        holdout_share_range=userdata.HOLDOUT_SHARE_RANGE,
         error=error,
         section="settings",
     )
@@ -117,19 +118,12 @@ def save_settings():
     return redirect(url_for("llm.settings_page"), 303)
 
 
-@bp.post("/settings/holdout")
-def save_holdout():
-    action = request.form.get("action")
+@bp.post("/settings/eval")
+def save_eval():
+    """The holdout share; apart from the model form, so it saves while Ollama is offline."""
     with writing() as conn:
-        if action == "start":
-            if userdata.get_setting(conn, "eval.holdout_start") is not None:
-                raise UserDataError("a held-out set is already started; clear it first")
-            userdata.set_setting(conn, "eval.holdout_start", userdata.utcnow())
-        elif action == "clear":
-            userdata.set_setting(conn, "eval.holdout_start", None)
-        else:
-            abort(400)
-    return redirect(url_for("llm.settings_page"), 303)
+        userdata.set_setting(conn, "eval.holdout_share", request.form.get("holdout_share", ""))
+    return redirect(url_for("llm.settings_page") + "#evaluation", 303)
 
 
 # --- Extraction and the queue ---

@@ -65,7 +65,6 @@ from .userdata import (
     SKILL_LEVELS,
     STATUSES,
     collapse,
-    get_setting,
     ground_quote,
     identity_claim,
     identity_cover,
@@ -514,19 +513,19 @@ def _marked_keys(conn: Connection, job_id: int) -> set[str]:
     )
 
 
-def held_out(first_complete_at, start) -> bool:
-    """A labelled posting is held out when its labelling was first flagged complete after the held-out start."""
-    return start is not None and first_complete_at is not None and first_complete_at > start
-
-
-def labelled_sets(conn: Connection) -> dict:
-    """The held-out start (or None) and how many labelled postings are in each set."""
-    start = get_setting(conn, "eval.holdout_start")
-    firsts = conn.execute(
-        select(posting_triage.c.skills_first_complete_at).where(posting_triage.c.skills_complete_at.is_not(None))
-    ).scalars().all()
-    held = sum(held_out(first, start) for first in firsts)
-    return {"start": start, "development": len(firsts) - held, "held_out": held}
+def eval_set_counts(conn: Connection) -> dict:
+    """How many postings flagged complete are in each eval set, and how many holdout postings weren't drawn."""
+    rows = conn.execute(
+        select(posting_triage.c.eval_set, posting_triage.c.eval_set_origin).where(
+            posting_triage.c.skills_complete_at.is_not(None)
+        )
+    ).all()
+    holdout = [origin for name, origin in rows if name == "holdout"]
+    return {
+        "dev": sum(name == "dev" for name, _ in rows),
+        "holdout": len(holdout),
+        "holdout_not_drawn": sum(origin != "drawn" for origin in holdout),
+    }
 
 
 def rejected_keys(conn: Connection, job_id: int) -> dict[str, str | None]:

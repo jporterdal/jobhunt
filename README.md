@@ -68,7 +68,7 @@ model (such as `nomic-embed-text`) pulled; choose them on the Settings page. Eve
 
 Prompts and linking methods are measured against the user's own labels before they replace what the app uses:
 
-- labelled postings, with a held-out set the prompts were never tuned on;
+- labelled postings, each drawn at random into a dev set or a holdout set the prompts were never tuned on;
 - recall against the marks the user found unaided;
 - a paired sign test that says `within noise` unless a difference is unlikely by chance.
 

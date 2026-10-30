@@ -150,7 +150,7 @@ def test_invalid_settings_rejected(client, three, form):
             "llm.num_ctx": 8192,
             "llm.segmenter": "llm-lines",
             "llm.embed_model": None,
-            "eval.holdout_start": None,
+            "eval.holdout_share": 0.5,
             "demo.created_at": None,
         }
 
@@ -212,26 +212,50 @@ def test_stray_skill_method_setting_ignored(client, three, candidate):
         assert "skills=atomic@2" in jobs.current_pipeline(conn)[1]
 
 
-def test_holdout_start_and_clear(client, three):
-    write(three, userdata.set_skills_complete, BANK, True)
-    html = text(get(client, "/settings"))
-    assert "all 1 labelled postings are development" in html and 'value="start"' in html
-    assert post(client, "/settings/holdout", {"action": "start"}).status_code == 303
-    write(three, userdata.set_skills_complete, SIMILAR, True)
-    html = text(get(client, "/settings"))
-    assert "Held-out set started" in html and "1 development, 1 held-out" in html and 'value="clear"' in html
-    assert post(client, "/settings/holdout", {"action": "start"}).status_code == 400  # already started
-    assert post(client, "/settings/holdout", {"action": "clear"}).status_code == 303
-    with three.connect() as conn:
-        assert userdata.get_setting(conn, "eval.holdout_start") is None
-    assert "all 2 labelled postings are development" in text(get(client, "/settings"))
-    assert post(client, "/settings/holdout", {"action": "other"}).status_code == 400
+def evaluation_html(html):
+    return html[html.index('id="evaluation"'):html.index("</section>", html.index('id="evaluation"'))]
 
 
-def test_holdout_needs_same_origin(client, three):
-    assert post(client, "/settings/holdout", {"action": "start"}, origin="http://evil.example").status_code == 403
+def test_default_holdout_share(client, three):
+    write(three, userdata.set_skills_complete, BANK, True, choice="dev")
+    write(three, userdata.set_skills_complete, SIMILAR, True, choice="holdout")
+    html = evaluation_html(text(get(client, "/settings")))
+    assert 'name="holdout_share" value="0.5" min="0.1" max="0.9" step="0.05"' in html
+    assert "Labelled postings: 1 dev, 1 holdout (1 not drawn)." in html
+    for point in ("Raise it when new dev postings fail", "Lower it for a while", "within noise", "moves no posting"):
+        assert point in html
+
+
+def test_changing_the_holdout_share(client, three):
+    for job in (BANK, SIMILAR):
+        write(three, userdata.set_skills_complete, job, True, draw=lambda: 0.99)  # dev, drawn
+    before = [(r.job_id, r.eval_set, r.eval_set_origin) for r in all_rows(three, posting_triage)]
+    response = post(client, "/settings/eval", {"holdout_share": "0.3"})
+    assert response.status_code == 303 and response.headers["Location"].endswith("/settings#evaluation")
     with three.connect() as conn:
-        assert userdata.get_setting(conn, "eval.holdout_start") is None
+        assert userdata.get_setting(conn, "eval.holdout_share") == 0.3
+    assert [(r.job_id, r.eval_set, r.eval_set_origin) for r in all_rows(three, posting_triage)] == before
+    assert 'name="holdout_share" value="0.3"' in text(get(client, "/settings"))
+
+
+@pytest.mark.parametrize("value", ["0.95", "0.05", "", "abc"])
+def test_holdout_share_out_of_range(client, three, value):
+    response = post(client, "/settings/eval", {"holdout_share": value})
+    assert response.status_code == 400 and "must be from 0.1 to 0.9" in text(response)
+    with three.connect() as conn:
+        assert userdata.get_setting(conn, "eval.holdout_share") == 0.5
+
+
+def test_holdout_share_saves_while_offline(three, tmp_path):
+    client = make_client(three, tmp_path, FakeOllama("offline"))
+    assert post(client, "/settings/eval", {"holdout_share": "0.4"}).status_code == 303
+    with three.connect() as conn:
+        assert userdata.get_setting(conn, "eval.holdout_share") == 0.4
+
+
+def test_held_out_start_route_removed(client, three):
+    assert post(client, "/settings/holdout", {"action": "start"}).status_code == 404
+    assert "Start a held-out set" not in text(get(client, "/settings"))
 
 
 def test_settings_offline(three, tmp_path):
@@ -561,6 +585,72 @@ def test_labelled_toggle_and_filter(client, three):
     assert all_rows(three, posting_triage)[0].skills_complete_at is None
 
 
+def marks_html(client, job_id=BANK):
+    html = text(get(client, f"/postings/{job_id}"))
+    return html[html.index('id="marks-panel"'):html.index("</section>", html.index('id="marks-panel"'))]
+
+
+def test_flagging_offers_the_set_choice(client, three):
+    html = marks_html(client)
+    assert '<select name="choice"' in html and '<option value="auto" selected>Auto</option>' in html
+    assert "move to dev" not in html
+    post(client, f"/postings/{BANK}/labelled", {"complete": "1"})  # Auto: a draw
+    [row] = all_rows(three, posting_triage)
+    assert row.eval_set in ("dev", "holdout") and row.eval_set_origin == "drawn"
+    html = marks_html(client)
+    assert "Labelling complete since" in html and f"· {row.eval_set} set" in html
+    assert 'title="drawn at random"' in html and 'name="choice"' not in html
+
+
+def test_flagging_with_a_chosen_set(client, three):
+    assert post(client, f"/postings/{BANK}/labelled", {"complete": "1", "choice": "holdout"}).status_code == 303
+    assert [(r.eval_set, r.eval_set_origin) for r in all_rows(three, posting_triage)] == [("holdout", "chosen")]
+    assert 'title="chosen by hand">· holdout set' in marks_html(client)
+
+
+def test_unknown_set_choice_refused(client, three):
+    assert post(client, f"/postings/{BANK}/labelled", {"complete": "1", "choice": "test"}).status_code == 400
+    assert all_rows(three, posting_triage) == []
+
+
+def test_clearing_the_flag_keeps_the_set(client, three):
+    post(client, f"/postings/{BANK}/labelled", {"complete": "1", "choice": "holdout"})
+    post(client, f"/postings/{BANK}/labelled", {"complete": "0"})
+    html = marks_html(client)
+    assert ">Labelling complete</button>" in html and "· holdout set" in html
+    assert 'name="choice"' not in html and "move to dev" in html  # moving works while the flag is cleared
+
+
+def test_flagging_again_shows_the_set(client, three):
+    post(client, f"/postings/{BANK}/labelled", {"complete": "1", "choice": "holdout"})
+    post(client, f"/postings/{BANK}/labelled", {"complete": "0"})
+    post(client, f"/postings/{BANK}/labelled", {"complete": "1", "choice": "dev"})  # the choice is ignored
+    assert [(r.eval_set, r.eval_set_origin) for r in all_rows(three, posting_triage)] == [("holdout", "chosen")]
+    html = marks_html(client)
+    assert "Labelling complete since" in html and "· holdout set" in html and "move to dev" in html
+    assert 'name="choice"' not in html
+
+
+def test_moving_a_holdout_posting_to_dev(client, three):
+    post(client, f"/postings/{BANK}/labelled", {"complete": "1", "choice": "holdout"})
+    response = post(client, f"/postings/{BANK}/eval-set", {"set": "dev"})
+    assert response.status_code == 303 and response.headers["Location"].endswith(f"/postings/{BANK}#marks-panel")
+    assert [(r.eval_set, r.eval_set_origin) for r in all_rows(three, posting_triage)] == [("dev", "moved")]
+    html = marks_html(client)
+    assert 'title="moved from holdout">· dev set' in html and "move to dev" not in html
+
+
+def test_moving_a_dev_posting_to_holdout_refused(client, three):
+    post(client, f"/postings/{BANK}/labelled", {"complete": "1", "choice": "dev"})
+    response = post(client, f"/postings/{BANK}/eval-set", {"set": "holdout"})
+    assert response.status_code == 400 and "prompts may have been tuned on it" in text(response)
+    assert [(r.eval_set, r.eval_set_origin) for r in all_rows(three, posting_triage)] == [("dev", "chosen")]
+
+
+def test_moving_an_unknown_posting(client):
+    assert post(client, "/postings/999/eval-set", {"set": "dev"}).status_code == 404
+
+
 # --- Guard on the new routes (8.7) ---
 
 
@@ -569,6 +659,7 @@ def post_routes(three):
     with three.connect() as conn:
         item = conn.execute(select(enrichment_skills.c.id)).scalars().first()
     write(three, userdata.add_skill_mark, BANK, "X", "data lineage")
+    write(three, userdata.set_skills_complete, SIMILAR, True, choice="holdout")  # something to move
     mark = all_rows(three, posting_skill_marks)[0].id
     return [
         ("/settings", {"num_ctx": "4096", "segmenter": "rules"}),
@@ -580,8 +671,9 @@ def post_routes(three):
         (f"/postings/{BANK}/rejections", {"skill": "LangChain", "reason": "not-a-skill"}),
         (f"/postings/{BANK}/rejections/reason", {"skill": "LangChain", "reason": "not-for-me"}),
         (f"/postings/{BANK}/rejections/delete", {"skill": "LangChain"}),
-        ("/settings/holdout", {"action": "start"}),
-        (f"/postings/{BANK}/labelled", {"complete": "1"}),
+        ("/settings/eval", {"holdout_share": "0.3"}),
+        (f"/postings/{BANK}/labelled", {"complete": "1", "choice": "holdout"}),
+        (f"/postings/{SIMILAR}/eval-set", {"set": "dev"}),
         (f"/postings/{BANK}/marks/{mark}/importance", {"importance": "required"}),
     ]
 

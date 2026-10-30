@@ -2,6 +2,7 @@
 derived-data writer."""
 
 import json
+import math
 
 import pytest
 from sqlalchemy import select
@@ -71,7 +72,7 @@ def test_settings_defaults(db):
             "llm.num_ctx": 8192,
             "llm.segmenter": "llm-lines",
             "llm.embed_model": None,
-            "eval.holdout_start": None,
+            "eval.holdout_share": 0.5,
             "demo.created_at": None,
         }
 
@@ -87,7 +88,7 @@ def test_settings_round_trip(db):
             "llm.num_ctx": 4096,
             "llm.segmenter": "rules",
             "llm.embed_model": None,
-            "eval.holdout_start": None,
+            "eval.holdout_share": 0.5,
             "demo.created_at": None,
         }
     assert count(db, app_settings) == 3
@@ -101,16 +102,22 @@ def test_demo_marker(db):
         write(db, userdata.set_setting, "demo.created_at", T2.replace(tzinfo=None))
 
 
-def test_holdout_start_set_and_clear(db):
-    write(db, userdata.set_setting, "eval.holdout_start", T2)
+def test_holdout_share_set(db):
+    write(db, userdata.set_setting, "eval.holdout_share", "0.3")
     with db.connect() as conn:
-        assert userdata.get_setting(conn, "eval.holdout_start") == T2
-    write(db, userdata.set_setting, "eval.holdout_start", "2026-10-03T11:00:00+02:00")
+        assert userdata.get_setting(conn, "eval.holdout_share") == 0.3
+    for share in (0.1, 0.9):
+        write(db, userdata.set_setting, "eval.holdout_share", share)
+        with db.connect() as conn:
+            assert userdata.get_setting(conn, "eval.holdout_share") == share
+
+
+def test_holdout_share_out_of_range(db):
+    write(db, userdata.set_setting, "eval.holdout_share", 0.4)
+    with pytest.raises(UserDataError, match="from 0.1 to 0.9"):
+        write(db, userdata.set_setting, "eval.holdout_share", 0.95)
     with db.connect() as conn:
-        assert userdata.get_setting(conn, "eval.holdout_start") == T3
-    write(db, userdata.set_setting, "eval.holdout_start", "")
-    with db.connect() as conn:
-        assert userdata.get_setting(conn, "eval.holdout_start") is None
+        assert userdata.get_setting(conn, "eval.holdout_share") == 0.4
 
 
 @pytest.mark.parametrize(
@@ -122,8 +129,11 @@ def test_holdout_start_set_and_clear(db):
         ("llm.num_ctx", 200000),
         ("llm.segmenter", "magic"),
         ("llm.skills", "atomic@2"),  # the code names the skill extraction method
-        ("eval.holdout_start", "soon"),
-        ("eval.holdout_start", "2026-10-03T09:00:00"),  # no time zone
+        ("eval.holdout_share", 0.95),
+        ("eval.holdout_share", 0.05),
+        ("eval.holdout_share", "abc"),
+        ("eval.holdout_share", "nan"),
+        ("eval.holdout_start", "2026-10-03T09:00:00+00:00"),  # replaced by the share
         ("llm.temperature", "1"),
     ],
 )
@@ -188,6 +198,122 @@ def test_skills_first_complete_is_kept(db):
 def test_skills_complete_unknown_posting(db):
     with pytest.raises(UserDataError):
         write(db, userdata.set_skills_complete, 123, True)
+
+
+# --- Eval sets ---
+
+
+@pytest.mark.parametrize(
+    "share, labelled, holdout, p",
+    [(0.5, 10, 5, 0.5), (0.5, 9, 0, 0.989), (0.3, 10, 2, 0.538), (0.5, 0, 0, 0.5)],
+)
+def test_holdout_probability(share, labelled, holdout, p):
+    assert userdata.holdout_probability(share, labelled, holdout) == pytest.approx(p, abs=0.0005)
+
+
+def test_holdout_probability_odds_multiply_by_e():
+    def odds(holdout):
+        p = userdata.holdout_probability(0.5, 10, holdout)
+        return p / (1 - p)
+
+    for holdout in range(10):
+        assert odds(holdout) / odds(holdout + 1) == pytest.approx(math.e)  # one posting short: e times the odds
+
+
+def eval_set(engine, job_id):
+    with engine.connect() as conn:
+        row = conn.execute(select(posting_triage).where(posting_triage.c.job_id == job_id)).first()
+    return (row.eval_set, row.eval_set_origin) if row else (None, None)
+
+
+def never():
+    raise AssertionError("no draw expected")
+
+
+@pytest.mark.parametrize("draw, expected", [(0.2, "holdout"), (0.8, "dev")])
+def test_drawing_a_set(db, draw, expected):
+    # No posting labelled yet: P is the share, 0.5.
+    write(db, userdata.set_skills_complete, JOB, True, now=T1, draw=lambda: draw)
+    assert eval_set(db, JOB) == (expected, "drawn")
+    [row] = all_rows(db, posting_triage)
+    assert row.skills_first_complete_at == T1
+
+
+@pytest.mark.parametrize("choice", ["dev", "holdout"])
+def test_choosing_a_set(db, choice):
+    write(db, userdata.set_skills_complete, JOB, True, choice=choice, draw=never)
+    assert eval_set(db, JOB) == (choice, "chosen")
+
+
+def test_unknown_choice_refused(db):
+    with pytest.raises(UserDataError, match="auto, dev, holdout"):
+        write(db, userdata.set_skills_complete, JOB, True, choice="test")
+    assert all_rows(db, posting_triage) == []
+
+
+def test_reflagging_keeps_the_set(db):
+    write(db, userdata.set_skills_complete, JOB, True, now=T1, draw=lambda: 0.1)
+    write(db, userdata.set_skills_complete, JOB, False, now=T2)
+    assert eval_set(db, JOB) == ("holdout", "drawn")
+    write(db, userdata.add_skill_mark, JOB, "Data lineage", "data lineage")
+    write(db, userdata.set_skills_complete, JOB, True, now=T3, choice="dev", draw=never)
+    assert eval_set(db, JOB) == ("holdout", "drawn")
+
+
+def test_clearing_before_a_set_draws_nothing(db):
+    write(db, userdata.set_skills_complete, JOB, False, draw=never)
+    assert eval_set(db, JOB) == (None, None)
+
+
+def test_draw_counts_only_flagged_postings(db):
+    third = add_posting(db, tag="3", external_id="9000000003")
+    write(db, userdata.set_skills_complete, JOB, True, choice="holdout")
+    write(db, userdata.set_skills_complete, OTHER, True, choice="holdout")
+    write(db, userdata.set_skills_complete, OTHER, False)
+    # Counted: JOB only (1 labelled, 1 holdout), so P = 1 / (1 + e^0.5) = 0.378; counting OTHER too, 0.269.
+    write(db, userdata.set_skills_complete, third, True, draw=lambda: 0.3)
+    assert eval_set(db, third) == ("holdout", "drawn")  # 0.3 < 0.378; with OTHER counted it would be dev
+
+
+def test_draw_uses_the_share(db):
+    write(db, userdata.set_setting, "eval.holdout_share", 0.3)
+    write(db, userdata.set_skills_complete, JOB, True, draw=lambda: 0.31)  # P = 0.3
+    assert eval_set(db, JOB) == ("dev", "drawn")
+
+
+def test_moving_to_dev(db):
+    write(db, userdata.set_skills_complete, JOB, True, choice="holdout")
+    write(db, userdata.set_skills_complete, JOB, False)
+    write(db, userdata.move_eval_set, JOB, "dev")  # while the flag is cleared
+    assert eval_set(db, JOB) == ("dev", "moved")
+
+
+def test_moving_dev_to_dev_changes_nothing(db):
+    write(db, userdata.set_skills_complete, JOB, True, now=T1, draw=lambda: 0.9)
+    write(db, userdata.move_eval_set, JOB, "dev", now=T3)
+    assert eval_set(db, JOB) == ("dev", "drawn")
+    [row] = all_rows(db, posting_triage)
+    assert row.updated_at == T1
+
+
+def test_dev_to_holdout_refused(db):
+    write(db, userdata.set_skills_complete, JOB, True, choice="dev")
+    with pytest.raises(UserDataError, match="prompts may have been tuned on it"):
+        write(db, userdata.move_eval_set, JOB, "holdout")
+    assert eval_set(db, JOB) == ("dev", "chosen")
+
+
+@pytest.mark.parametrize("job_id", [JOB, 123])  # JOB is never flagged; 123 isn't a posting
+def test_moving_without_a_set_refused(db, job_id):
+    with pytest.raises(UserDataError, match="isn't in an eval set"):
+        write(db, userdata.move_eval_set, job_id, "dev")
+
+
+def test_moving_to_an_unknown_set_refused(db):
+    write(db, userdata.set_skills_complete, JOB, True, choice="holdout")
+    with pytest.raises(UserDataError):
+        write(db, userdata.move_eval_set, JOB, "test")
+    assert eval_set(db, JOB) == ("holdout", "chosen")
 
 
 # --- Rejections (2.4) ---
@@ -363,3 +489,16 @@ def test_accept_all_skips_marked_and_rejected(db):
         write(db, userdata.accept_all, OTHER, run_id, "preferred")
     with pytest.raises(UserDataError):
         write(db, userdata.accept_all, JOB, run_id, "essential")
+
+
+def test_eval_set_counts(db):
+    jobs = [JOB, OTHER] + [add_posting(db, tag=str(i), external_id=str(9000000010 + i)) for i in range(3)]
+    write(db, userdata.set_skills_complete, jobs[0], True, draw=lambda: 0.9)  # dev, drawn
+    write(db, userdata.set_skills_complete, jobs[1], True, draw=lambda: 0.0)  # holdout, drawn
+    write(db, userdata.set_skills_complete, jobs[2], True, choice="holdout")  # holdout, chosen
+    write(db, userdata.set_skills_complete, jobs[3], True, choice="holdout")
+    write(db, userdata.move_eval_set, jobs[3], "dev")  # dev, moved
+    write(db, userdata.set_skills_complete, jobs[4], True, choice="holdout")
+    write(db, userdata.set_skills_complete, jobs[4], False)  # unflagged: not counted
+    with db.connect() as conn:
+        assert queries.eval_set_counts(conn) == {"dev": 2, "holdout": 2, "holdout_not_drawn": 1}

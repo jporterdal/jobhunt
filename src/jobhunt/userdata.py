@@ -6,7 +6,10 @@ store.py writes captured data and never touches these tables; this module never 
 from __future__ import annotations
 
 import json
+import math
+import random
 import re
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 from bs4 import BeautifulSoup
@@ -70,13 +73,17 @@ DOCUMENT_KINDS = ("cv", "cover_letter", "other")
 MARK_IMPORTANCES = ("required", "preferred")
 MARK_ORIGINS = ("selection", "suggestion")
 REJECTION_REASONS = ("not-a-skill", "not-for-me")
+EVAL_SETS = ("dev", "holdout")
+EVAL_SET_ORIGINS = ("drawn", "chosen", "moved", "before-random")
+EVAL_SET_CHOICES = ("auto",) + EVAL_SETS  # what the user picks at the first flagging; auto draws
 NUM_CTX_RANGE = (2048, 131072)
+HOLDOUT_SHARE_RANGE = (0.1, 0.9)
 DEFAULT_SETTINGS = {
     "llm.model": None,
     "llm.num_ctx": 8192,
     "llm.segmenter": "llm-lines",
     "llm.embed_model": None,  # None: an installed nomic-embed-text (links.embed_model)
-    "eval.holdout_start": None,  # postings first flagged complete after this are held out of development
+    "eval.holdout_share": 0.5,  # the share of labelled postings the draw aims for in holdout
     "demo.created_at": None,  # set only by `jobhunt demo`: the database holds demo data
 }
 
@@ -289,18 +296,64 @@ def remove_skill_mark(conn: Connection, mark_id: int) -> None:
     skills_changed(conn)
 
 
-def set_skills_complete(conn: Connection, job_id: int, complete: bool, now: datetime | None = None) -> None:
-    """Flag that every skill the posting asks for is marked (it joins the labelled set), or clear the flag."""
+def holdout_probability(share: float, labelled: int, holdout: int) -> float:
+    """The chance the next drawn posting goes to holdout: the share when holdout holds exactly its share, the odds
+    multiplied by e for each posting it falls short and divided by e for each posting it is ahead."""
+    shortfall = share * labelled - holdout
+    return 1 / (1 + (1 - share) / share * math.exp(-shortfall))
+
+
+def set_skills_complete(
+    conn: Connection,
+    job_id: int,
+    complete: bool,
+    now: datetime | None = None,
+    choice: str = "auto",
+    draw: Callable[[], float] = random.random,
+) -> None:
+    """Flag that every skill the posting asks for is marked (it joins the labelled set), or clear the flag.
+
+    At the first flagging the posting gets its eval set: `choice` 'dev' or 'holdout', or with 'auto' a draw
+    (holdout when draw() < holdout_probability over the postings flagged complete now). A posting keeps its set.
+    """
+    if choice not in EVAL_SET_CHOICES:
+        raise UserDataError(f"the set must be one of {', '.join(EVAL_SET_CHOICES)}")
     if conn.execute(select(postings.c.job_id).where(postings.c.job_id == job_id)).first() is None:
         raise UserDataError("no such posting")
     now = now or utcnow()
-    first = conn.execute(
-        select(posting_triage.c.skills_first_complete_at).where(posting_triage.c.job_id == job_id)
-    ).scalar()
+    row = conn.execute(
+        select(posting_triage.c.skills_first_complete_at, posting_triage.c.eval_set).where(
+            posting_triage.c.job_id == job_id
+        )
+    ).first()
     values = {"skills_complete_at": now if complete else None}
-    if complete and first is None:
-        values["skills_first_complete_at"] = now  # never cleared: it decides development or held-out
+    if complete and (row is None or row.skills_first_complete_at is None):
+        values["skills_first_complete_at"] = now  # never cleared
+    if complete and (row is None or row.eval_set is None):
+        if choice == "auto":
+            sets = conn.execute(
+                select(posting_triage.c.eval_set).where(
+                    posting_triage.c.skills_complete_at.is_not(None), posting_triage.c.eval_set.is_not(None)
+                )
+            ).scalars().all()
+            p = holdout_probability(get_setting(conn, "eval.holdout_share"), len(sets), sets.count("holdout"))
+            values.update(eval_set="holdout" if draw() < p else "dev", eval_set_origin="drawn")
+        else:
+            values.update(eval_set=choice, eval_set_origin="chosen")
     _touch_triage(conn, job_id, now, **values)
+
+
+def move_eval_set(conn: Connection, job_id: int, to: str, now: datetime | None = None) -> None:
+    """Move a holdout posting to dev (origin 'moved'); a dev posting stays dev and never moves to holdout."""
+    current = conn.execute(select(posting_triage.c.eval_set).where(posting_triage.c.job_id == job_id)).scalar()
+    if current is None:
+        raise UserDataError("the posting isn't in an eval set: flag its labelling complete first")
+    if to == "holdout" and current == "dev":
+        raise UserDataError("a dev posting can't move to holdout: prompts may have been tuned on it")
+    if to not in EVAL_SETS:
+        raise UserDataError(f"the set must be one of {', '.join(EVAL_SETS)}")
+    if to != current:
+        _touch_triage(conn, job_id, now or utcnow(), eval_set=to, eval_set_origin="moved")
 
 
 def matchable_text(description_html: str) -> str:
@@ -442,7 +495,9 @@ def get_setting(conn: Connection, key: str):
         return DEFAULT_SETTINGS[key]
     if key == "llm.num_ctx":
         return int(value)
-    if key in ("eval.holdout_start", "demo.created_at"):
+    if key == "eval.holdout_share":
+        return float(value)
+    if key == "demo.created_at":
         return datetime.fromisoformat(value)
     return value
 
@@ -473,8 +528,14 @@ def set_setting(conn: Connection, key: str, value, now: datetime | None = None) 
         value = (value or "").strip()
         if not value:
             raise UserDataError("choose an embedding model")
-    elif key == "eval.holdout_start":
-        value = _holdout_start(value)
+    elif key == "eval.holdout_share":
+        low, high = HOLDOUT_SHARE_RANGE
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            value = math.nan
+        if not low <= value <= high:  # NaN fails too
+            raise UserDataError(f"the holdout share must be from {low} to {high}")
     elif key == "demo.created_at":
         if not isinstance(value, datetime) or value.tzinfo is None:
             raise UserDataError("the demo's creation time must be a date and time with a time zone")
@@ -490,20 +551,6 @@ def set_setting(conn: Connection, key: str, value, now: datetime | None = None) 
         conn.execute(update(app_settings).where(app_settings.c.key == key).values(value=stored, updated_at=now))
     if key == "llm.embed_model" and (previous is None or previous.value != stored):
         skills_changed(conn)  # candidates are shortlisted with this model: re-judge with the new one
-
-
-def _holdout_start(value) -> str:
-    """A timezone-aware time (or ISO string) as a UTC ISO string; None or empty clears the start."""
-    if value is None or value == "":
-        return ""
-    if isinstance(value, str):
-        try:
-            value = datetime.fromisoformat(value.strip())
-        except ValueError:
-            raise UserDataError("the held-out start must be a date and time") from None
-    if not isinstance(value, datetime) or value.tzinfo is None:
-        raise UserDataError("the held-out start must be a date and time with a time zone")
-    return value.astimezone(UTC).isoformat()
 
 
 # --- Applications ---

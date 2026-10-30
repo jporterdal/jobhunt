@@ -139,7 +139,17 @@ def set_importance(job_id: int, mark_id: int):
 def set_labelled(job_id: int):
     with writing() as conn:
         _require_posting(conn, job_id)
-        userdata.set_skills_complete(conn, job_id, request.form.get("complete") == "1")
+        userdata.set_skills_complete(
+            conn, job_id, request.form.get("complete") == "1", choice=request.form.get("choice") or "auto"
+        )
+    return redirect(_detail_url(job_id) + "#marks-panel", 303)
+
+
+@bp.post("/postings/<int:job_id>/eval-set")
+def move_eval_set(job_id: int):
+    with writing() as conn:
+        _require_posting(conn, job_id)
+        userdata.move_eval_set(conn, job_id, request.form.get("set", ""))
     return redirect(_detail_url(job_id) + "#marks-panel", 303)
 
 

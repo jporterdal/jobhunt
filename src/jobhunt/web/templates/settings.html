@@ -47,22 +47,23 @@
     Skills are extracted with <code>{{ skills_method }}</code>, the method the code names; it is not a setting.
     The embedding model shortlists which of your profile skills each posting skill might match; the model above then judges the link.</p>
 </section>
-<section class="panel src-user" id="held-out">
+<section class="panel src-user" id="evaluation">
   <span class="kind-label">yours</span>
   <h2>Evaluation</h2>
-  {% if labelled.start %}
-  <p>Held-out set started {{ labelled.start|dt }}. Labelled postings: {{ labelled.development }} development, {{ labelled.held_out }} held-out.</p>
-  <form method="post" action="{{ url_for('llm.save_holdout') }}">
-    <button type="submit" name="action" value="clear">Clear the held-out start</button>
+  <p>Labelled postings: {{ eval_sets.dev }} dev, {{ eval_sets.holdout }} holdout{% if eval_sets.holdout_not_drawn %} ({{ eval_sets.holdout_not_drawn }} not drawn){% endif %}.</p>
+  <form method="post" action="{{ url_for('llm.save_eval') }}" class="settings">
+    <label>Holdout share
+      <input type="number" name="holdout_share" value="{{ settings['eval.holdout_share'] }}" min="{{ holdout_share_range[0] }}" max="{{ holdout_share_range[1] }}" step="0.05" required>
+    </label>
+    <button type="submit" class="primary">Save</button>
   </form>
-  {% else %}
-  <p>No held-out set: all {{ labelled.development }} labelled postings are development postings.</p>
-  <form method="post" action="{{ url_for('llm.save_holdout') }}">
-    <button type="submit" name="action" value="start">Start a held-out set now</button>
-  </form>
-  {% endif %}
-  <p class="small muted"><code>jobhunt eval</code> reports postings first flagged “Labelling complete” after the start apart from the others.
-    Prompts tuned on the development postings flatter themselves there; the held-out postings show how a method does on postings nobody tuned it for.
-    Start one before labelling new postings.</p>
+  <p class="small muted">Each posting's set is drawn when you first flag its labelling complete, aiming for this share in holdout; you can also choose the set yourself there.
+    <code>jobhunt eval</code> reports dev, holdout and both together: prompts tuned on dev postings flatter themselves there, and holdout shows how a method does on postings nobody tuned it for.</p>
+  <ul class="small muted">
+    <li>Raise it when new dev postings fail in ways you've already seen, so more labels go where decisions are made.</li>
+    <li>Lower it for a while when starting a round of prompt work with fewer than about 8 dev postings.</li>
+    <li>Raise it when method comparisons keep coming out within noise: holdout is then too small to tell methods apart.</li>
+    <li>Changing it moves no posting; later draws move towards the new share.</li>
+  </ul>
 </section>
 {% endblock %}

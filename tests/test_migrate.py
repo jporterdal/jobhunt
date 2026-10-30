@@ -1,14 +1,17 @@
 import hashlib
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import MetaData, inspect, select
+from sqlalchemy import MetaData, insert, inspect, select
 from sqlalchemy import text as sa_text
 
 from jobhunt import db, migrate
 from jobhunt.cli import main
 from jobhunt.db import captures, init_db, posting_snapshots, postings
+
+from .conftest import add_posting
 
 CAPTURED = (postings, captures, posting_snapshots)
 
@@ -19,7 +22,7 @@ def schema_diff(engine, target: MetaData) -> list:
 
 
 def test_head_matches_metadata(engine):
-    assert migrate.current_revision(engine) == migrate.head_revision() == "0011"
+    assert migrate.current_revision(engine) == migrate.head_revision() == "0012"
     assert schema_diff(engine, db.metadata) == []
 
 
@@ -73,6 +76,76 @@ def test_inbox_prunes_downgrade_and_upgrade_again(engine):
     assert "inbox_prunes" not in inspect(engine).get_table_names()
     assert "postings" in inspect(engine).get_table_names()
     init_db(engine)
+    assert schema_diff(engine, db.metadata) == []
+
+
+START = datetime(2026, 10, 3, 12, 0, tzinfo=UTC)
+
+
+def labelled_before_0012(engine, firsts, start=None, cleared=False) -> list[int]:
+    """Postings with labelling first flagged at `firsts` (None: never; `cleared`: the flag since cleared), on a
+    database taken back to 0011, with the held-out start `start` recorded; returns their keys."""
+    jobs = [add_posting(engine, tag=str(i), external_id=str(9000000100 + i)) for i in range(len(firsts))]
+    with engine.begin() as conn:
+        for job, first in zip(jobs, firsts, strict=True):
+            conn.execute(
+                insert(db.posting_triage).values(
+                    job_id=job,
+                    updated_at=START,
+                    skills_complete_at=None if cleared else first,
+                    skills_first_complete_at=first,
+                )
+            )
+    migrate.downgrade(engine, "0011")
+    assert "eval_set" not in {c["name"] for c in inspect(engine).get_columns("posting_triage")}
+    if start is not None:
+        with engine.begin() as conn:
+            conn.execute(
+                insert(db.app_settings).values(key="eval.holdout_start", value=start.isoformat(), updated_at=START)
+            )
+    init_db(engine)
+    return jobs
+
+
+def eval_sets(engine, jobs) -> list:
+    with engine.connect() as conn:
+        rows = {r.job_id: (r.eval_set, r.eval_set_origin) for r in conn.execute(select(db.posting_triage)).all()}
+    return [rows.get(job, (None, None)) for job in jobs]
+
+
+def holdout_start_row(engine):
+    with engine.connect() as conn:
+        return conn.execute(select(db.app_settings).where(db.app_settings.c.key == "eval.holdout_start")).first()
+
+
+def test_upgrading_with_no_held_out_start(engine):
+    jobs = labelled_before_0012(engine, [START + timedelta(minutes=i) for i in range(9)])
+    assert eval_sets(engine, jobs) == [("dev", "before-random")] * 9
+    assert schema_diff(engine, db.metadata) == []
+
+
+def test_upgrading_with_a_held_out_start(engine):
+    before = [START - timedelta(hours=i + 1) for i in range(9)]
+    after = [START + timedelta(hours=1), START + timedelta(days=2)]
+    jobs = labelled_before_0012(engine, before + after + [None], start=START)
+    assert eval_sets(engine, jobs) == [("dev", "before-random")] * 9 + [("holdout", "before-random")] * 2 + [
+        (None, None)  # never flagged: no set until its first flagging
+    ]
+    assert holdout_start_row(engine) is None
+
+
+def test_upgrading_a_posting_flagged_then_cleared(engine):
+    jobs = labelled_before_0012(engine, [START - timedelta(1), START + timedelta(1)], start=START, cleared=True)
+    assert eval_sets(engine, jobs) == [("dev", "before-random"), ("holdout", "before-random")]
+
+
+def test_eval_sets_downgrade_and_upgrade_again(engine):
+    jobs = labelled_before_0012(engine, [START])
+    migrate.downgrade(engine, "0011")
+    assert "eval_set" not in {c["name"] for c in inspect(engine).get_columns("posting_triage")}
+    assert holdout_start_row(engine) is None  # the start isn't restored
+    init_db(engine)
+    assert eval_sets(engine, jobs) == [("dev", "before-random")]
     assert schema_diff(engine, db.metadata) == []
 
 

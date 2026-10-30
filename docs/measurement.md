@@ -10,8 +10,11 @@ write-ups, with every table, are in the archived changes linked below.
 **Labels.** The user labels 5–10 postings *before* extracting them: every skill the posting asks for is selected in
 the text and marked required or preferred, then the posting is flagged "labelling complete". A skill the user only
 noticed because the model suggested it is *accepted*, not selected by hand, since selecting it after seeing the
-suggestion would flatter the model. Postings flagged after a held-out start date form a separate held-out set, so
-prompts tuned on the development postings are also checked on postings they never saw.
+suggestion would flatter the model. When a posting is first flagged, it is drawn into the *dev* or the *holdout* set
+(or the user chooses one), so prompts tuned on the dev postings are also checked on postings they never saw. The
+draw aims for a holdout share (0.5 by default): the odds of holdout multiply by e for each posting it falls short and
+divide by e for each posting it is ahead. A posting keeps its set; a holdout posting can be moved to dev, never back.
+The report shows dev, holdout and both together, and the drawn holdout postings alone when some were chosen or moved.
 
 **Scoring by mark origin** (`jobhunt eval`):
 

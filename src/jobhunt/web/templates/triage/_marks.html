@@ -1,6 +1,9 @@
 {# Skills marked in the description, with their importance for the posting and the user's level for each skill.
    Context: d (posting detail). #}
 {% set complete_at = d.triage.skills_complete_at if d.triage else None %}
+{% set eval_set = d.triage.eval_set if d.triage else None %}
+{% set eval_set_origins = {"drawn": "drawn at random", "chosen": "chosen by hand", "moved": "moved from holdout",
+                           "before-random": "allocated before random allocation"} %}
 <section class="panel src-user" id="marks-panel">
   <span class="kind-label">yours</span>
   <h2 id="marks-heading">Skills asked for ({% if d.marks %}{{ d.marks | length }} marked{% else %}none marked{% endif %}{% if complete_at %} · labelling complete{% endif %})</h2>
@@ -57,8 +60,26 @@
     {% else %}
     <input type="hidden" name="complete" value="1">
     <button type="submit" title="Every skill this posting asks for is marked: use it to measure extraction">Labelling complete</button>
+    {% if not eval_set %}
+    <select name="choice" aria-label="eval set for this posting" title="Auto draws the set at random; a set chosen by hand is recorded as chosen">
+      <option value="auto" selected>Auto</option>
+      <option value="dev">Dev</option>
+      <option value="holdout">Holdout</option>
+    </select>
+    {% endif %}
+    {% endif %}
+    {% if eval_set %}
+    <span class="eval-set" title="{{ eval_set_origins[d.triage.eval_set_origin] }}">· {{ eval_set }} set</span>
     {% endif %}
   </form>
+  {% if eval_set == "holdout" %}
+  <form method="post" action="{{ url_for('triage.move_eval_set', job_id=d.posting.job_id) }}" class="row small"
+        hx-post="{{ url_for('triage.move_eval_set', job_id=d.posting.job_id) }}"
+        hx-target="#marks" hx-select="#marks" hx-swap="outerHTML">
+    <input type="hidden" name="set" value="dev">
+    <button type="submit" class="link small" title="A dev posting can't move back to holdout">move to dev</button>
+  </form>
+  {% endif %}
   </div>
   </details>
 </section>

@@ -74,7 +74,9 @@ def test_text_report(db_url, fake_client, capsys):
     labelled(db_url)
     assert main(["eval", "--db", db_url]) == 0
     out = capsys.readouterr().out
-    assert "model:    gemma4:12b" in out and "postings: 1 scored" in out and "(4/5)" in out and "unjudged" in out
+    assert "model:    gemma4:12b" in out and "dev: 1 labelled postings, 1 scored" in out
+    assert "holdout: 0 labelled" in out
+    assert "(4/5)" in out and "unjudged" in out
     assert runs(db_url) == 1
 
 
@@ -158,7 +160,8 @@ def test_comparing_stored_runs(db_url, fake_client, capsys, candidate):
     assert "atomic@2: 0 new runs, 1 reused" in err and "atomic@5: 0 new runs, 1 reused" in err
     header = next(line for line in out.splitlines() if line.strip().endswith("atomic@5"))
     assert "atomic@2" in header
-    recall = next(line for line in out.splitlines() if line.startswith("recall all"))
+    assert "dev: 1 labelled postings" in out and "holdout: 0 labelled postings" in out
+    recall = next(line for line in out.splitlines() if line.startswith("recall all"))  # the dev set's
     assert "40% (2/5)" in recall and "20% (1/5)" in recall
     assert any(line.startswith("precision all") for line in out.splitlines())
     assert any(line.startswith("unjudged all") for line in out.splitlines())
@@ -172,6 +175,7 @@ def test_marks_found_by_one_method_only(db_url, fake_client, capsys, candidate):
     out = capsys.readouterr().out
     assert "selected marks matched by some methods only: 1" in out
     assert "    MLflow (required) “MLflow”: atomic@2" in out
+    assert any(line.startswith(f"  {JOB}  ") and line.endswith("(dev)") for line in out.splitlines())
 
     assert main(["eval", "--db", db_url, "--skills", "atomic@2,atomic@5", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
@@ -181,7 +185,7 @@ def test_marks_found_by_one_method_only(db_url, fake_client, capsys, candidate):
         {
             "job_id": JOB,
             "title": report["differences"][0]["title"],
-            "set": "development",
+            "set": "dev",
             "name": "MLflow",
             "importance": "required",
             "quote": "MLflow",

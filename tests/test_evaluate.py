@@ -4,10 +4,10 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from jobhunt import userdata
-from jobhunt.db import enrichment_skills, posting_enrichments, rejected_suggestions
+from jobhunt.db import enrichment_skills, posting_enrichments, posting_triage, rejected_suggestions
 from jobhunt.enrich import evaluate
 from jobhunt.enrich.evaluate import Counts, Labelled, Mark, Suggestion
 from jobhunt.enrich.pipeline import Unreachable
@@ -257,7 +257,7 @@ def label(engine):
         ("Airflow", "Experience with Airflow"),
     ]:
         write(engine, userdata.add_skill_mark, JOB, name, quote, importance="required")
-    write(engine, userdata.set_skills_complete, JOB, True)
+    write(engine, userdata.set_skills_complete, JOB, True, choice="dev")
 
 
 def runs(engine):
@@ -440,49 +440,102 @@ def test_wrong_suggestions_by_reason(db):
     ]
 
 
-def sets_db(db):
-    """JOB labelled before the held-out start (T1 < T2), OTHER after it (T4); both have stored runs."""
+def put_set(engine, job_id, name, origin="drawn"):
+    """Store a posting's eval set directly, as a draw, a choice, a move or the upgrade would."""
+    with engine.begin() as conn:
+        conn.execute(
+            update(posting_triage)
+            .where(posting_triage.c.job_id == job_id)
+            .values(eval_set=name, eval_set_origin=origin)
+        )
+
+
+def sets_db(db, other_origin="drawn"):
+    """JOB in dev, OTHER in holdout (origin `other_origin`); both labelled and with stored runs."""
     label_at(db, JOB, [("Python", "Python"), ("Docker", "Docker")], T1)
-    write(db, userdata.set_setting, "eval.holdout_start", T2)
     label_at(db, OTHER, [("Python", "Python")], T4)
+    put_set(db, JOB, "dev")
+    put_set(db, OTHER, "holdout", other_origin)
     add_run(db, JOB, skills=[("Python", "required", "Python")])
     add_run(db, OTHER, skills=[("Python", "required", "Python")])
 
 
-def test_labelled_after_the_start(db):
+def set_rows(report):
+    return [(name, size, c.postings, c.matched_marks["all"], c.marks["all"]) for name, size, c in report.sets()]
+
+
+def test_both_sets_reported(db):
     sets_db(db)
     report = evaluate.evaluate(db, FakeLLM(unreachable=True))
-    assert [(name, size, c.postings, c.matched_marks["all"], c.marks["all"]) for name, size, c in report.sets()] == [
-        ("development", 1, 1, 1, 2),
-        ("held-out", 1, 1, 1, 1),
+    assert set_rows(report) == [
+        ("dev", 1, 1, 1, 2),
+        ("holdout", 1, 1, 1, 1),
         ("together", 2, 2, 2, 3),
     ]
     summary = report.to_dict()
     assert summary["recall"]["all"] == {"count": 2, "of": 3, "ratio": 2 / 3}  # together, at the top level
-    assert summary["sets"]["development"]["labelled"] == 1 and summary["sets"]["held_out"]["recall"]["all"]["of"] == 1
-    assert [p["set"] for p in summary["per_posting"]] == ["development", "held-out"]
+    assert set(summary["sets"]) == {"dev", "holdout"} and "holdout_start" not in summary
+    assert summary["sets"]["dev"]["labelled"] == 1 and summary["sets"]["holdout"]["recall"]["all"]["of"] == 1
+    assert [(p["set"], p["set_origin"]) for p in summary["per_posting"]] == [("dev", "drawn"), ("holdout", "drawn")]
     text = report.format_text()
-    assert "development: 1 labelled postings, 1 scored" in text and "held-out: 1 labelled postings" in text
-    assert "together: 2 labelled postings, 2 scored" in text and "postings: " not in text
+    assert "dev: 1 labelled postings, 1 scored" in text and "holdout: 1 labelled postings" in text
+    assert "together: 2 labelled postings, 2 scored" in text and "drawn" not in text
 
 
-def test_no_held_out_set(db):
-    sets_db(db)
-    write(db, userdata.set_setting, "eval.holdout_start", None)
+@pytest.mark.parametrize("origin", ["chosen", "before-random"])
+def test_drawn_holdout_postings_alone(db, origin):
+    sets_db(db, origin)
+    third = add_posting(db, description_text=TEXT, external_id="9000000003")
+    label_at(db, third, [("Python", "Python"), ("SQL", "SQL")], T4)
+    put_set(db, third, "holdout")
+    add_run(db, third, skills=[("Python", "required", "Python")])
     report = evaluate.evaluate(db, FakeLLM(unreachable=True))
-    assert [(name, size) for name, size, _ in report.sets()] == [("all", 2)]
+    assert set_rows(report) == [
+        ("dev", 1, 1, 1, 2),
+        ("holdout", 2, 2, 2, 3),
+        ("holdout (drawn)", 1, 1, 1, 2),
+        ("together", 3, 3, 3, 5),
+    ]
     summary = report.to_dict()
-    assert "sets" not in summary and summary["holdout_start"] is None
-    assert "postings: 2 scored" in report.format_text()
+    assert set(summary["sets"]) == {"dev", "holdout", "holdout_drawn"}
+    assert summary["sets"]["holdout_drawn"]["labelled"] == 1
+    assert "holdout (drawn): 1 labelled postings, 1 scored" in report.format_text()
 
 
-def test_re_flagging_keeps_a_posting_in_development(db):
+def test_empty_holdout_set_reported(db):
     sets_db(db)
-    write(db, userdata.set_skills_complete, JOB, False, now=T4)
-    write(db, userdata.add_skill_mark, JOB, "SQL", "SQL", now=T4)
-    write(db, userdata.set_skills_complete, JOB, True, now=T4)
+    put_set(db, OTHER, "dev", "before-random")
+    report = evaluate.evaluate(db, FakeLLM(unreachable=True))
+    assert [(name, size) for name, size, _ in report.sets()] == [("dev", 2), ("holdout", 0), ("together", 2)]
+    summary = report.to_dict()
+    assert summary["sets"]["holdout"]["labelled"] == 0 and summary["sets"]["holdout"]["recall"]["all"]["of"] == 0
+    assert "holdout: 0 labelled postings, 0 scored" in report.format_text()
+
+
+def test_together_figures_equal_the_whole_set(db):
+    sets_db(db)
+    report = evaluate.evaluate(db, FakeLLM(unreachable=True))
+    summary = report.to_dict()
+    whole = evaluate._summary(evaluate.total(p.counts for p in report.postings))
+    assert {k: summary[k] for k in whole} == whole
+
+
+def test_labelled_set_reads_the_stored_sets(db):
+    sets_db(db, "moved")
     with db.connect() as conn:
-        assert {p.job_id: p.set for p in evaluate.labelled_set(conn)} == {JOB: "development", OTHER: "held-out"}
+        assert {p.job_id: (p.set, p.set_origin) for p in evaluate.labelled_set(conn)} == {
+            JOB: ("dev", "drawn"),
+            OTHER: ("holdout", "moved"),
+        }
+
+
+def test_re_flagging_keeps_a_posting_in_its_set(db):
+    sets_db(db)
+    write(db, userdata.set_skills_complete, OTHER, False, now=T4)
+    write(db, userdata.add_skill_mark, OTHER, "SQL", "SQL", now=T4)
+    write(db, userdata.set_skills_complete, OTHER, True, now=T4, choice="dev")
+    with db.connect() as conn:
+        assert {p.job_id: p.set for p in evaluate.labelled_set(conn)} == {JOB: "dev", OTHER: "holdout"}
 
 
 def test_mark_selected_after_a_run(db):
@@ -528,7 +581,8 @@ def test_json_detail(db):
     assert old_fields <= set(summary) and summary["postings"] == 1 and summary["reused_runs"] == 1
     assert summary["skills"] == "atomic@2" and run_id
     [detail] = summary["per_posting"]
-    assert (detail["job_id"], detail["set"], detail["status"]) == (JOB, "development", "succeeded")
+    assert (detail["job_id"], detail["set"], detail["status"]) == (JOB, "dev", "succeeded")
+    assert detail["set_origin"] == "chosen"
     assert detail["missed"] == [
         {"name": "SQL", "importance": "required", "quote": "SQL", "step": "extraction"},
         {"name": "MLflow", "importance": "required", "quote": "MLflow", "step": "extraction"},
