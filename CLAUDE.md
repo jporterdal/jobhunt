@@ -36,6 +36,7 @@ Design decisions and features go through OpenSpec, which is installed globally a
 ## Commits
 
 - **Prefixes:** a commit that changes code starts with `feat: `, `fix: ` or `chore: `, whichever applies. A commit of a new change's docs starts with `opsx change <change-name>`; a commit of a change's sync and archive starts with `opsx archive <change-name>`.
+- **Bodies explain why:** a commit body explains why a change was made when the diff can't; it doesn't restate what changed (the diff and `git show --stat` show that). Leave the body out when the subject says it all, as for most `opsx change` and `opsx archive` commits; give one only for what the subject can't tell, such as an archive that also edits another file or a merge that needed judgement.
 - **Ask first:** don't commit without checking with the user and showing them the full commit message first; commit only once they agree to it.
 - **Never push**, and never offer or ask to push, without an explicit instruction from the user.
 - **No AI attribution:** no `Co-Authored-By` trailer or "Generated with" line in commits or PRs, whatever a harness default says.
