@@ -27,7 +27,7 @@ from sqlalchemy.engine import Connection, Engine
 
 from ..db import link_judgments, skill_embeddings, skill_link_overrides
 from ..userdata import LINK_RELATIONS, get_setting, name_key
-from . import expand
+from . import expand, tracing
 from .pipeline import LLM, Cancelled, StepFailed, conform
 
 NAME = "link-judge"
@@ -403,7 +403,9 @@ class LinkJudge:
 
     def judge(self, item: Planned, quotes: dict[int, str], llm: LLM) -> dict[int, str]:
         """skill_id -> relation for every candidate; candidates the model leaves out are 'none'."""
-        response = conform("link", llm.chat_json(self.system, self.request(item, quotes), JUDGE_SCHEMA), JUDGE_SCHEMA)
+        response = conform(
+            "link", tracing.chat(llm, self.system, self.request(item, quotes), JUDGE_SCHEMA), JUDGE_SCHEMA
+        )
         out = {c.skill_id: "none" for c in item.candidates}
         for answer in response["relations"]:
             if 1 <= answer["candidate"] <= len(item.candidates):
@@ -482,7 +484,8 @@ def judge_links(
     with engine.connect() as conn:
         missing = texts_to_embed(conn, embed)
     if missing:
-        vectors = client.embed(embed, [embed_text(embed, name) for name in missing.values()])
+        with tracing.step("embed", embed):
+            vectors = tracing.embed(client, embed, [embed_text(embed, name) for name in missing.values()])
         with engine.begin() as conn:
             derived.save_embeddings(conn, embed, dict(zip(missing, vectors, strict=True)))
     with engine.connect() as conn:
@@ -495,13 +498,18 @@ def judge_links(
             raise Cancelled()
         relations, status, error, output = {}, "succeeded", None, {}
         if item.candidates:
-            try:
-                relations = JUDGE.judge(item, quotes, llm)
-                output = {"relations": relations}
-            except StepFailed as exc:
-                status, error = "failed", f"{exc.step or 'link'}: {exc.message}"
-                result.failed += 1
+            with tracing.step("judge", JUDGE.id, posting_key=item.key) as span:
+                try:
+                    relations = JUDGE.judge(item, quotes, llm)
+                    output = {"relations": relations}
+                except StepFailed as exc:
+                    status, error = "failed", f"{exc.step or 'link'}: {exc.message}"
+                    result.failed += 1
+                    span.fail(exc)
+                output = tracing.with_ids(output)
             result.requests += 1
+        else:
+            output = tracing.with_ids(output)  # no request, so no step: the run span made it
         with engine.begin() as conn:
             derived.save_judgment(conn, item, model, embed, PIPELINE, status, error, relations, output)
         result.judged += status == "succeeded"

@@ -12,6 +12,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from . import tracing
 from .pipeline import StepFailed, Unreachable
 
 DEFAULT_URL = "http://localhost:11434"
@@ -20,6 +21,7 @@ CHAT_TIMEOUT = 600
 STATUS_TTL = 5
 KEEP_ALIVE = "10m"
 SEED = 7
+TEMPERATURE = 0
 EMBED_BATCH = 64  # texts per /api/embed request
 
 
@@ -49,6 +51,16 @@ class Status:
     def ready(self) -> bool:
         """Model actions can run: the server is up and the selected model is installed."""
         return self.state in ("online", "spill")
+
+
+def summed_usage(responses: list[dict]) -> dict:
+    """The counts and durations of several answers added up; a field missing from any answer is left out."""
+    fields = (*tracing.USAGE_COUNTS, *tracing.USAGE_DURATIONS)
+    return {
+        f: sum(r[f] for r in responses)
+        for f in fields
+        if responses and all(isinstance(r.get(f), int) for r in responses)
+    }
 
 
 class OllamaClient:
@@ -143,6 +155,7 @@ class OllamaClient:
         """One vector per text, from /api/embed in batches. Only the model and the texts are sent (embeddings
         have no sampling options). A batch answered with the wrong number of vectors fails the whole call."""
         vectors: list[list[float]] = []
+        usage: list[dict] = []
         for at in range(0, len(texts), EMBED_BATCH):
             batch = texts[at:at + EMBED_BATCH]
             response = self._request("/api/embed", {"model": model, "input": batch}, chat=True)
@@ -151,6 +164,8 @@ class OllamaClient:
                 count = len(got) if isinstance(got, list) else 0
                 raise StepFailed("embed", f"asked {model} for {len(batch)} embeddings and got {count}")
             vectors.extend(got)
+            usage.append(response)
+        tracing.record_usage(summed_usage(usage), batches=len(usage))
         return vectors
 
     def for_model(self, model: str, num_ctx: int) -> ChatModel:
@@ -177,7 +192,7 @@ class ChatModel:
             "stream": False,
             "format": schema,
             "keep_alive": KEEP_ALIVE,
-            "options": {"temperature": 0, "seed": SEED, "num_ctx": self.num_ctx},
+            "options": {"temperature": TEMPERATURE, "seed": SEED, "num_ctx": self.num_ctx},
         }
         if self.thinking:
             body["think"] = False
@@ -185,6 +200,7 @@ class ChatModel:
 
     def chat_json(self, system: str, user: str, schema: dict) -> dict:
         response = self.client._request("/api/chat", self.request_body(system, user, schema), chat=True)
+        tracing.record_usage(response)
         try:
             parsed = json.loads(response["message"]["content"])
         except (KeyError, TypeError, ValueError):

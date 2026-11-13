@@ -58,6 +58,9 @@ model (such as `nomic-embed-text`) pulled; choose them on the Settings page. Eve
 - **Model output is a suggestion, checked against the text.** Steps work on character offsets into the stored
   description, so they can label text but not rewrite it. A quote that isn't in the text can't be accepted.
 - **Local models only.** One configurable Ollama address, fixed at startup and never taken from the browser.
+- **Optional tracing of model work.** With the `otel` extra and `--otlp-endpoint`, runs, steps and model calls
+  (with Ollama's token counts and durations) go as OpenTelemetry traces to a viewer on this machine, without
+  posting or CV text unless you ask. See [docs/tracing.md](docs/tracing.md).
 - **Portable SQL.** SQLAlchemy Core on SQLite and Postgres. Every storage test runs on both, and a test fails if
   the migrated schema differs from the table definitions.
 - **Decisions are written down first.** Each feature went through an [OpenSpec](https://github.com/Fission-AI/OpenSpec)

@@ -206,3 +206,37 @@ def add_run(
             {"steps": [], "segments": [[s.start, s.end, s.label] for s in segs]},
         )
         return derived.save_run(conn, job_id, snapshot.id, model, pipeline, result, origin)
+
+
+@contextmanager
+def _tracing_into_memory(content: bool):
+    pytest.importorskip("opentelemetry.sdk", reason="the otel extra isn't installed")
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from jobhunt.enrich import tracing
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracing.install(provider, content)
+    try:
+        yield exporter
+    finally:
+        tracing.reset()
+        provider.shutdown()
+
+
+@pytest.fixture
+def traced():
+    """Tracing on, without content, into an in-memory exporter (skipped without the otel extra)."""
+    with _tracing_into_memory(False) as exporter:
+        yield exporter
+
+
+@pytest.fixture
+def traced_content():
+    """Tracing on with --trace-content, into an in-memory exporter (skipped without the otel extra)."""
+    with _tracing_into_memory(True) as exporter:
+        yield exporter

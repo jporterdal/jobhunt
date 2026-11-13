@@ -175,6 +175,30 @@ CI installs `.[dev,otel]` (and `.[dev,postgres,otel]`) so the tracing tests run 
 
 No schema or data migration. Existing installs are unaffected until they install the extra and pass an endpoint. Rollback is removing the option or the extra; stored `otel` ids are inert.
 
+## Decided while implementing
+
+Points the decisions above left open, settled in the code and accepted by the user:
+
+- **A judgment made without a request names its run span.** A posting skill whose shortlist is empty is judged without a model call, so no `step judge` span exists for it; its stored output carries the `links` run span's ids instead, so every result stored while tracing is on names its trace (as "Stored results name their trace" requires).
+- **The embedding step's method is the embedding model.** Embedding has no versioned method, so `step embed` sets `jobhunt.step.method` to the embedding model's name (`nomic-embed-text:latest`); `docs/tracing.md` says so.
+- **No run status while the server is unreachable.** A run that ends in `Unreachable` has an error status and `error.type` `Unreachable` but no `jobhunt.run.status`: its job goes back to the queue, so it has neither failed nor finished. `Cancelled` sets `cancelled`, any other exception `failed`.
+- **The expansion pass is one step, not marked failed by one expansion.** `expand_all` opens one `step expand` span around all its requests; an expansion whose answer fails the schema check is stored as failed but doesn't mark the shared step, since the others succeeded. A `step judge` covers one request, so a failed judgment does mark its step (`fail()` on the handle).
+- **Run handles accept only known attributes.** `set()` on a run or root handle takes the keys of `RUN_ATTRIBUTES` and raises `KeyError` for any other, so no text can reach a span by passing a new keyword; content attributes have their own switches.
+- **`link_eval.execute` keeps its body as `_execute`.** The run span wraps a call to it rather than re-indenting the whole function.
+
+## Verification with a live viewer (2026-11-13)
+
+Task 7.4, run with the user watching: Jaeger 2.23.0 all-in-one (`cr.jaegertracing.io/jaegertracing/jaeger:2.23.0`, ports 4318 and 16686 published on 127.0.0.1 as `docs/tracing.md` gives them), Ollama 0.32.1, and `jobhunt serve --otlp-endpoint http://localhost:4318/v1/traces` against a copy of the database and documents. One posting was extracted with `gemma4:12b` and the app's pipeline (`seg=llm-lines@2 skills=atomic@2 salary=paylines@1 validate=v@3`).
+
+- **The run's trace** (fetched from Jaeger's API) held seven spans: `run posting` (52.5 s) with `step segment` (one chat), `step skills` (two chats, one per skill group; the first answer wasn't empty, so neither was a retry) and `step salary` (no request: no line mentioned pay, 0.001 s). The parentage, step methods and run attributes (origin `app`, job, posting, snapshot and stored run ids, status `succeeded`) were as in D3 and D4.
+- **Usage figures** were on every chat span. The segment request read 1528 tokens and wrote 505 in 24.2 s, 14.1 s of it loading the model; the two skills requests took 23.8 s (1172 in, 1280 out) and 4.5 s (402 in, 190 out), with loads of about 0.3 s. Each span's own duration matched Ollama's `total_duration` and the stored trace's step `seconds`, so the load cost of the first request in a job shows up without any extra attribute.
+- **The ids matched both ways:** the stored run's `output_json` named the run span (`otel.trace_id`, `otel.span_id`), the posting page showed `trace <id>` with that same id, and the run span carried `jobhunt.run.id` of the stored run.
+- **No text:** the longest attribute value in the trace was the 62-character pipeline id, no span had events, and the resource held only `service.name` and `service.version`.
+- **The links job** the run queued was its own trace: one `run links` span with `jobhunt.links.planned` 0 and no steps, because every posting skill was already judged and every name already embedded, so it made no model call (2 s, mostly planning).
+- **Shutdown:** stopping `serve` with Ctrl-C exited with status 0 and the trace was already in Jaeger, sent by the batch processor while the job ran.
+
+One thing to know when reading traces in Jaeger 2: its v2 search route (`/api/traces?service=…`) answered 404, while fetching a trace by id (`/api/traces/<id>`) and the v3 query API (`/api/v3/traces?query.service_name=…`) worked. The UI's search works, so `docs/tracing.md` needs no change.
+
 ## Open Questions
 
 - Whether the application and document pages should show a document run's trace id too. The posting page is enough to find a trace; adding it elsewhere is a template line each and changes nothing above.

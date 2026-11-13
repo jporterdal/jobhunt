@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from . import tracing
+
 LABELS = ("required", "preferred", "other")
 IMPORTANCES = ("required", "preferred")
 SKILL_KINDS = ("technical", "soft", "qualification")
@@ -253,7 +255,7 @@ class _Recorder:
 
     def chat_json(self, system: str, user: str, schema: dict) -> dict:
         started = time.monotonic()
-        response = self._llm.chat_json(system, user, schema)
+        response = tracing.chat(self._llm, system, user, schema)
         self.calls.append({"seconds": round(time.monotonic() - started, 3), "response": response})
         return response
 
@@ -262,7 +264,8 @@ def run_pipeline(
     text: str, llm: LLM, steps: Steps, should_stop: Callable[[], bool] = lambda: False
 ) -> RunResult:
     """Segment, extract skills and salary, then validate and merge duplicate skills. Raises Cancelled and
-    Unreachable; a StepFailed becomes a failed result with no items."""
+    Unreachable; a StepFailed becomes a failed result with no items. While tracing is on, each step is a span
+    and the trace names the current (run) span under "otel"."""
     from . import validate
 
     started_at = datetime.now(UTC)
@@ -282,7 +285,8 @@ def run_pipeline(
         trace["steps"].append(entry)
         began = time.monotonic()
         try:
-            return fn(recorder)
+            with tracing.step(name, f"{impl.name}@{impl.version}"):
+                return fn(recorder)
         finally:
             entry["seconds"] = round(time.monotonic() - began, 3)
 
@@ -294,7 +298,7 @@ def run_pipeline(
     except StepFailed as exc:
         error = f"{exc.step or current}: {exc.message}"
         trace["error"] = error
-        return RunResult("failed", error, started_at, datetime.now(UTC), segments, trace=trace)
+        return RunResult("failed", error, started_at, datetime.now(UTC), segments, trace=tracing.with_ids(trace))
 
     if should_stop():
         raise Cancelled()
@@ -306,5 +310,5 @@ def run_pipeline(
         "salaries": [asdict(c.item) | {"verified": c.verified} for c in salaries],
     }
     return RunResult(
-        "succeeded", None, started_at, datetime.now(UTC), segments, skills, salaries, trace
+        "succeeded", None, started_at, datetime.now(UTC), segments, skills, salaries, tracing.with_ids(trace)
     )

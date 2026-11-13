@@ -266,3 +266,96 @@ def test_fake_embeddings_make_similar_names_similar():
 
     llm, lll, sf = FakeOllama().embed("nomic-embed-text:latest", ["LLMs", "LLM", "Salesforce"])
     assert cosine(llm, lll) > 0.6 > cosine(llm, sf)
+
+
+# --- Ollama's counts and durations on model call spans (model-tracing) ---
+
+USAGE = {
+    "prompt_eval_count": 812, "eval_count": 96, "total_duration": 42000000000, "load_duration": 50000000,
+    "prompt_eval_duration": 12000000000, "eval_duration": 29000000000,
+}
+
+
+def chat_answer(**usage):
+    return 200, {"message": {"role": "assistant", "content": '{"lines": []}'}, **usage}
+
+
+def test_chat_usage_on_the_chat_span(stub, traced):
+    from jobhunt.enrich import tracing
+
+    stub.routes["/api/chat"] = chat_answer(**USAGE)
+    model = OllamaClient(stub.url).for_model("phi4:latest", 4096)
+    assert tracing.chat(model, "s", "u", SCHEMA) == {"lines": []}
+    [span] = traced.get_finished_spans()
+    assert span.name == "chat phi4:latest"
+    assert span.attributes["gen_ai.usage.input_tokens"] == 812
+    assert span.attributes["gen_ai.usage.output_tokens"] == 96
+    assert span.attributes["jobhunt.ollama.total_duration_s"] == 42.0
+    assert span.attributes["jobhunt.ollama.load_duration_s"] == 0.05
+    assert span.attributes["jobhunt.ollama.prompt_eval_duration_s"] == 12.0
+    assert span.attributes["jobhunt.ollama.eval_duration_s"] == 29.0
+    assert span.attributes["jobhunt.request.num_ctx"] == 4096
+
+
+def test_count_left_out_of_the_answer_is_left_off_the_span(stub, traced):
+    from jobhunt.enrich import tracing
+
+    stub.routes["/api/chat"] = chat_answer(**{k: v for k, v in USAGE.items() if k != "prompt_eval_count"})
+    tracing.chat(OllamaClient(stub.url).for_model("phi4:latest", 4096), "s", "u", SCHEMA)
+    [span] = traced.get_finished_spans()
+    assert "gen_ai.usage.input_tokens" not in span.attributes
+    assert span.attributes["gen_ai.usage.output_tokens"] == 96
+
+
+def test_usage_outside_a_model_call_span_changes_nothing(stub, traced):
+    from jobhunt.enrich import tracing
+
+    stub.routes["/api/chat"] = chat_answer(**USAGE)
+    with tracing.step("segment", "llm-lines@2"):
+        OllamaClient(stub.url).for_model("phi4:latest", 4096).chat_json("s", "u", SCHEMA)  # not through tracing.chat
+    [step] = traced.get_finished_spans()
+    assert not any(k.startswith(("gen_ai.usage", "jobhunt.ollama")) for k in step.attributes)
+
+
+def test_usage_without_tracing(stub):
+    stub.routes["/api/chat"] = chat_answer(**USAGE)
+    assert OllamaClient(stub.url).for_model("phi4:latest", 4096).chat_json("s", "u", SCHEMA) == {"lines": []}
+
+
+def test_embedding_usage_summed_over_batches(stub, traced, monkeypatch):
+    from jobhunt.enrich import ollama, tracing
+
+    monkeypatch.setattr(ollama, "EMBED_BATCH", 8)
+
+    def route(body):
+        status, answer = embed_route(body)
+        return status, {**answer, "prompt_eval_count": len(body["input"]), "total_duration": 30000000,
+                        "load_duration": 1000000}
+
+    stub.routes["/api/embed"] = route
+    texts = [f"skill {i}" for i in range(20)]
+    assert len(tracing.embed(OllamaClient(stub.url), "nomic-embed-text:latest", texts)) == 20
+    [span] = traced.get_finished_spans()
+    assert span.name == "embeddings nomic-embed-text:latest"
+    assert span.attributes["jobhunt.embed.texts"] == 20 and span.attributes["jobhunt.embed.batches"] == 3
+    assert span.attributes["gen_ai.usage.input_tokens"] == 20
+    assert span.attributes["jobhunt.ollama.total_duration_s"] == pytest.approx(0.09)
+    assert span.attributes["jobhunt.ollama.load_duration_s"] == pytest.approx(0.003)
+    assert not any("skill 1" in str(v) for v in span.attributes.values())
+
+
+def test_embedding_field_missing_from_one_batch_is_left_out(stub, traced, monkeypatch):
+    from jobhunt.enrich import ollama, tracing
+
+    monkeypatch.setattr(ollama, "EMBED_BATCH", 8)
+    calls = []
+
+    def route(body):
+        calls.append(1)
+        status, answer = embed_route(body)
+        return status, {**answer, **({"prompt_eval_count": 8} if len(calls) == 1 else {})}
+
+    stub.routes["/api/embed"] = route
+    tracing.embed(OllamaClient(stub.url), "nomic-embed-text:latest", [f"skill {i}" for i in range(12)])
+    [span] = traced.get_finished_spans()
+    assert "gen_ai.usage.input_tokens" not in span.attributes and span.attributes["jobhunt.embed.batches"] == 2

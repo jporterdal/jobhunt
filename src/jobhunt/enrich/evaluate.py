@@ -37,7 +37,7 @@ from ..db import (
 from ..queries import rejected_keys
 from ..store import latest_snapshot
 from ..userdata import get_setting
-from . import derived, validate
+from . import derived, tracing, validate
 from .pipeline import CURRENT_SKILLS, IMPORTANCES, Steps, pipeline_id, run_pipeline, skill_extractors, steps_for
 
 
@@ -659,7 +659,12 @@ def execute(engine: Engine, client, plan: Plan, window: Window | None = None) ->
         client.version()  # Unreachable before any model call
         llm = client.for_model(plan.model, plan.num_ctx)
         for posting in todo:
-            results[posting.job_id] = run_pipeline(posting.text, llm, plan.steps)
+            with tracing.run(
+                "posting", origin="eval", posting_id=posting.job_id, snapshot_id=posting.snapshot_id, model=plan.model,
+                pipeline=plan.pipeline,
+            ) as span:
+                result = results[posting.job_id] = run_pipeline(posting.text, llm, plan.steps)
+                span.finish(result.status, result.error)
 
     out = []
     with engine.begin() as conn:

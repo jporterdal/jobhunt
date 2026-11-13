@@ -42,7 +42,9 @@ method="post" action="{{ url }}" hx-post="{{ url }}" hx-target="#model-says" hx-
     <noscript><button type="submit">Show</button></noscript>
   </form>
   {% endif %}
-  <p class="small muted">{{ run.model }} · <code>{{ run.pipeline }}</code> · {{ run.finished_at | dt }}
+  <p class="small muted">{{ run.model }} · <code>{{ run.pipeline }}</code>
+    {%- if run.trace_id %} · <span class="src-derived" title="OpenTelemetry trace of this run">trace <code>{{ run.trace_id }}</code></span>{% endif %}
+    · {{ run.finished_at | dt }}
     · {{ "%.1f" | format((run.finished_at - run.started_at).total_seconds()) }} s</p>
   {% if panel.stale %}
   <p class="stale small">Made on an older snapshot of this posting, so its suggestions cannot be accepted. Extract again to use the current description.</p>

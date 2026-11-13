@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,otel]"
       - run: pytest
 
   test-postgres:
@@ -48,7 +48,7 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: pip install -e ".[dev,postgres]"
+      - run: pip install -e ".[dev,postgres,otel]"
       - run: pytest
 
   lint:

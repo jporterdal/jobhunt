@@ -48,6 +48,56 @@ def _ollama_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _otlp_endpoint(text: str) -> str:
+    """argparse type for the trace endpoint: an http(s) address on this machine, refused (exit 2) before the
+    database is opened. The environment's value is checked the same way, as argparse parses string defaults."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    refused = argparse.ArgumentTypeError(
+        f"{text!r} is not allowed: traces are only sent to this machine (an http or https address on localhost, "
+        "127.0.0.0/8 or ::1)"
+    )
+    try:
+        parts = urlsplit(text)
+        host = parts.hostname
+        parts.port  # noqa: B018 - raises ValueError for a malformed port
+    except ValueError:
+        raise refused from None
+    if parts.scheme not in ("http", "https") or not host:
+        raise refused
+    if host == "localhost":
+        return text
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        raise refused from None
+    if address == ipaddress.ip_address("::1") or (
+        address.version == 4 and address in ipaddress.ip_network("127.0.0.0/8")
+    ):
+        return text
+    raise refused
+
+
+def _tracing_args(parser: argparse.ArgumentParser) -> None:
+    """--otlp-endpoint and --trace-content, fixed at start-up like --ollama-url (see docs/tracing.md)."""
+    parser.add_argument(
+        "--otlp-endpoint",
+        type=_otlp_endpoint,
+        default=os.environ.get("JOBHUNT_OTLP_ENDPOINT") or None,
+        metavar="URL",
+        help="send OpenTelemetry traces of model work to this OTLP/HTTP traces address on this machine, such as "
+        "http://localhost:4318/v1/traces; needs the otel extra (default: $JOBHUNT_OTLP_ENDPOINT, else no tracing)",
+    )
+    parser.add_argument(
+        "--trace-content",
+        action="store_true",
+        default=os.environ.get("JOBHUNT_TRACE_CONTENT") == "1",
+        help="also put prompts, model answers and error messages in spans (default: on when "
+        "$JOBHUNT_TRACE_CONTENT is 1)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobhunt", description="Collect and annotate job postings and track applications."
@@ -100,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"folder for uploaded documents (default: $JOBHUNT_DOCUMENTS or {DEFAULT_DOCUMENTS_DIR})",
     )
     _ollama_arg(serve)
+    _tracing_args(serve)
     serve.add_argument("--debug", action="store_true", help="Flask debugger and auto-reload (development only)")
 
     ev = commands.add_parser(
@@ -160,6 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _db_arg(ev)
     _ollama_arg(ev)
+    _tracing_args(ev)
 
     profile = commands.add_parser("profile", help="maintain the profile")
     profile_commands = profile.add_subparsers(dest="profile_command", required=True)
@@ -400,6 +452,7 @@ def _inbox_prune(args: argparse.Namespace) -> int:
 
 
 def _serve(args: argparse.Namespace) -> int:
+    from .enrich import tracing
     from .enrich.jobs import Worker
     from .enrich.ollama import OllamaClient
     from .parsers import installed as installed_parsers
@@ -408,6 +461,7 @@ def _serve(args: argparse.Namespace) -> int:
 
     engine = make_engine(args.db)
     worker = pruner = None
+    stop_tracing = None
     try:
         init_db(engine)
         client = OllamaClient(args.ollama_url)
@@ -427,6 +481,11 @@ def _serve(args: argparse.Namespace) -> int:
         # The debug reloader's parent process only watches files; the worker and the daily prune run in the child
         # it serves from.
         if not args.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+            stop_tracing = tracing.setup(args.otlp_endpoint, args.trace_content)
+            if tracing.enabled():
+                print(f"  tracing:   {args.otlp_endpoint}")
+                if args.trace_content:
+                    print("  span content: on (prompts, answers and error messages are sent to the trace endpoint)")
             worker = Worker(engine, client)
             worker.start()
             pruner = Pruner(engine, args.inbox, installed_parsers().parsers)
@@ -439,6 +498,8 @@ def _serve(args: argparse.Namespace) -> int:
         for thread in (worker, pruner):
             if thread is not None:
                 thread.join(timeout=5)
+        if stop_tracing is not None:
+            stop_tracing()  # after the worker, so its last spans are sent
         engine.dispose()
     return 0
 
@@ -459,7 +520,7 @@ def _split(value: str | None) -> list[str]:
 
 
 def _eval_links(args: argparse.Namespace) -> int:
-    from .enrich import link_eval
+    from .enrich import link_eval, tracing
     from .enrich.ollama import OllamaClient
     from .enrich.pipeline import StepFailed, Unreachable
 
@@ -480,15 +541,17 @@ def _eval_links(args: argparse.Namespace) -> int:
 
     engine = make_engine(args.db)
     client = OllamaClient(args.ollama_url)
+    stop_tracing = tracing.setup(args.otlp_endpoint, args.trace_content)
     try:
         init_db(engine)
-        plan = link_eval.plan(engine, client, retrievals, judges, args.model, args.fresh, args.all_skills)
-        print(plan.statement(), file=sys.stderr)
-        if args.dry_run:
-            return 0
-        if plan.needs_requests:
-            client.version()  # refuse before making any request
-        report = link_eval.execute(engine, client, plan, progress=lambda m: print(m, file=sys.stderr))
+        with tracing.root("eval links"):
+            plan = link_eval.plan(engine, client, retrievals, judges, args.model, args.fresh, args.all_skills)
+            print(plan.statement(), file=sys.stderr)
+            if args.dry_run:
+                return 0
+            if plan.needs_requests:
+                client.version()  # refuse before making any request
+            report = link_eval.execute(engine, client, plan, progress=lambda m: print(m, file=sys.stderr))
     except link_eval.NoReference:
         print(NO_OVERRIDES, file=sys.stderr)
         return 1
@@ -505,6 +568,7 @@ def _eval_links(args: argparse.Namespace) -> int:
         return 1
     finally:
         engine.dispose()
+        stop_tracing()
     print(link_eval.report_json(report) if args.json else link_eval.format_text(report))
     return 0
 
@@ -512,7 +576,7 @@ def _eval_links(args: argparse.Namespace) -> int:
 def _eval(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
-    from .enrich import evaluate
+    from .enrich import evaluate, tracing
 
     windowed = args.posted_within is not None or args.labelled_within is not None
     if args.links:
@@ -541,16 +605,18 @@ def _eval(args: argparse.Namespace) -> int:
 
     engine = make_engine(args.db)
     reports = []
+    stop_tracing = tracing.setup(args.otlp_endpoint, args.trace_content)
     try:
         init_db(engine)
-        plans = [evaluate.plan(engine, args.model, args.segmenter, method, args.fresh) for method in methods]
-        for p in plans:
-            print(f"{p.skills}: {len(p.todo)} new runs, {len(p.labelled) - len(p.todo)} reused", file=sys.stderr)
-        client = OllamaClient(args.ollama_url)
-        if any(p.todo for p in plans):
-            client.version()  # refuse before running any method
-        for p in plans:
-            reports.append(evaluate.execute(engine, client, p, window))
+        with tracing.root("eval skills"):
+            plans = [evaluate.plan(engine, args.model, args.segmenter, method, args.fresh) for method in methods]
+            for p in plans:
+                print(f"{p.skills}: {len(p.todo)} new runs, {len(p.labelled) - len(p.todo)} reused", file=sys.stderr)
+            client = OllamaClient(args.ollama_url)
+            if any(p.todo for p in plans):
+                client.version()  # refuse before running any method
+            for p in plans:
+                reports.append(evaluate.execute(engine, client, p, window))
     except evaluate.NoLabelledPostings:
         print(NO_LABELS, file=sys.stderr)
         return 1
@@ -564,6 +630,7 @@ def _eval(args: argparse.Namespace) -> int:
         return 1
     finally:
         engine.dispose()
+        stop_tracing()
     if len(reports) == 1:
         print(evaluate.report_json(reports[0]) if args.json else reports[0].format_text())
     else:

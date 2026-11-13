@@ -172,3 +172,91 @@ def test_pruner_not_started_in_debug_reloader_parent(monkeypatch, tmp_path, runs
     monkeypatch.setenv("WERKZEUG_RUN_MAIN", "true")
     serve(tmp_path, "--debug")
     assert [e for e, _ in pruners] == ["start", "stop", "join"]
+
+
+# --- Trace endpoint and content (model-tracing) ---
+
+ACCEPTED_ENDPOINTS = [
+    "http://localhost:4318/v1/traces", "http://127.0.0.1:4318/v1/traces", "http://[::1]:4318/v1/traces",
+    "https://localhost/v1/traces", "http://127.8.9.10:4318/v1/traces",
+]
+REFUSED_ENDPOINTS = [
+    "https://traces.example.com/v1/traces", "http://192.0.2.10:4318/v1/traces", "ftp://localhost/x",
+    "localhost:4318", "http://localhost:notaport/v1/traces", "http://[::ffff:192.0.2.10]:4318/v1/traces",
+]
+
+
+@pytest.mark.parametrize("command", ["serve", "eval"])
+@pytest.mark.parametrize("endpoint", ACCEPTED_ENDPOINTS)
+def test_loopback_endpoints_accepted(monkeypatch, command, endpoint):
+    monkeypatch.delenv("JOBHUNT_OTLP_ENDPOINT", raising=False)
+    assert build_parser().parse_args([command, "--otlp-endpoint", endpoint]).otlp_endpoint == endpoint
+
+
+@pytest.mark.parametrize("command", ["serve", "eval"])
+@pytest.mark.parametrize("endpoint", REFUSED_ENDPOINTS)
+def test_other_endpoints_refused_before_the_database_opens(tmp_path, capsys, command, endpoint):
+    db_file = tmp_path / "never.db"
+    with pytest.raises(SystemExit) as exited:
+        main([command, "--db", f"sqlite:///{db_file}", "--otlp-endpoint", endpoint])
+    assert exited.value.code == 2 and not db_file.exists()
+    assert "traces are only sent to this machine" in capsys.readouterr().err
+
+
+def test_tracing_off_by_default(monkeypatch):
+    for name in ("JOBHUNT_OTLP_ENDPOINT", "JOBHUNT_TRACE_CONTENT", "OTEL_EXPORTER_OTLP_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")  # set for another tool: ignored
+    for command in ("serve", "eval"):
+        args = build_parser().parse_args([command])
+        assert (args.otlp_endpoint, args.trace_content) == (None, False)
+
+
+def test_endpoint_and_content_from_the_environment(monkeypatch):
+    monkeypatch.setenv("JOBHUNT_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
+    monkeypatch.setenv("JOBHUNT_TRACE_CONTENT", "1")
+    args = build_parser().parse_args(["eval"])
+    assert (args.otlp_endpoint, args.trace_content) == ("http://127.0.0.1:4318/v1/traces", True)
+    monkeypatch.setenv("JOBHUNT_TRACE_CONTENT", "yes")  # only 1 turns it on
+    assert build_parser().parse_args(["serve"]).trace_content is False
+    monkeypatch.setenv("JOBHUNT_OTLP_ENDPOINT", "")
+    assert build_parser().parse_args(["serve"]).otlp_endpoint is None
+
+
+def test_option_wins_over_the_environment(monkeypatch):
+    monkeypatch.setenv("JOBHUNT_OTLP_ENDPOINT", "http://127.0.0.1:4318/v1/traces")
+    args = build_parser().parse_args(["serve", "--otlp-endpoint", "http://localhost:4319/v1/traces"])
+    assert args.otlp_endpoint == "http://localhost:4319/v1/traces"
+    monkeypatch.setenv("JOBHUNT_OTLP_ENDPOINT", "https://traces.example.com/v1/traces")  # never used
+    args = build_parser().parse_args(["serve", "--otlp-endpoint", "http://localhost:4319/v1/traces"])
+    assert args.otlp_endpoint == "http://localhost:4319/v1/traces"
+
+
+def test_remote_endpoint_in_the_environment_refused(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("JOBHUNT_OTLP_ENDPOINT", "https://traces.example.com/v1/traces")
+    with pytest.raises(SystemExit) as exited:
+        serve(tmp_path)
+    assert exited.value.code == 2 and "only sent to this machine" in capsys.readouterr().err
+
+
+def test_serve_without_the_extra_warns_and_serves(monkeypatch, tmp_path, capsys, runs, workers):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_opentelemetry(name, *args, **kwargs):
+        if name.startswith("opentelemetry"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_opentelemetry)
+    assert serve(tmp_path, "--otlp-endpoint", "http://localhost:4318/v1/traces") == 0
+    out = capsys.readouterr()
+    assert 'pip install -e ".[otel]"' in out.err and "tracing:" not in out.out
+    assert len(runs) == 1 and len(workers) == 1
+
+
+def test_no_tracing_line_without_an_endpoint(monkeypatch, tmp_path, capsys, runs):
+    monkeypatch.delenv("JOBHUNT_OTLP_ENDPOINT", raising=False)
+    serve(tmp_path)
+    assert "tracing:" not in capsys.readouterr().out

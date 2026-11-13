@@ -20,7 +20,7 @@ from sqlalchemy.engine import Connection, Engine
 
 from ..db import link_judgments, link_measurements, link_relations, skill_link_overrides
 from ..userdata import get_setting
-from . import expand, links
+from . import expand, links, tracing
 from .pipeline import StepFailed, Unreachable
 
 SWEEP_SIZES = (3, 5, 8, 10, 15)
@@ -402,7 +402,17 @@ class Report:
 
 def execute(engine: Engine, client, plan: Plan, progress: Callable[[str], None] = lambda _: None) -> Report:
     """Make the plan's expansions, embeddings and judgments, each stored as it's made, then score. Raises
-    Unreachable when requests are needed and the server can't be reached, and StepFailed when embedding fails."""
+    Unreachable when requests are needed and the server can't be reached, and StepFailed when embedding fails.
+    While tracing is on, the whole measurement is one `links` run span with origin `eval`."""
+    with tracing.run("links", origin="eval", model=plan.model, embed_model=plan.embed_model) as span:
+        report = _execute(engine, client, plan, progress)
+        failed = sum(r.failed for r in report.results)
+        span.set(judged=report.new_judgments, failed=failed)
+        span.finish("succeeded")
+        return report
+
+
+def _execute(engine: Engine, client, plan: Plan, progress: Callable[[str], None]) -> Report:
     from ..queries import effective_links, profile_skills
     from . import derived
 
@@ -417,7 +427,10 @@ def execute(engine: Engine, client, plan: Plan, progress: Callable[[str], None] 
             texts |= links.texts_to_embed(conn, plan.embed_model, links.RETRIEVALS[combo.retrieval], keys, profile)
     if texts:
         progress(f"embedding {len(texts)} phrases")
-        vectors = client.embed(plan.embed_model, [links.embed_text(plan.embed_model, t) for t in texts.values()])
+        with tracing.step("embed", plan.embed_model):
+            vectors = tracing.embed(
+                client, plan.embed_model, [links.embed_text(plan.embed_model, t) for t in texts.values()]
+            )
         with engine.begin() as conn:
             derived.save_embeddings(conn, plan.embed_model, dict(zip(texts, vectors, strict=True)))
 
@@ -451,11 +464,14 @@ def execute(engine: Engine, client, plan: Plan, progress: Callable[[str], None] 
             llm = client.for_model(plan.model, _num_ctx(engine))
         item = links.Planned(key, name, quote, candidates)
         relations, status, error, output = {}, "succeeded", None, {}
-        try:
-            relations = links.JUDGES[combo.judge].judge(item, contexts[combo.judge], llm)
-            output = {"relations": relations}
-        except StepFailed as exc:
-            status, error = "failed", f"{exc.step or 'link'}: {exc.message}"
+        with tracing.step("judge", combo.judge, posting_key=key) as span:
+            try:
+                relations = links.JUDGES[combo.judge].judge(item, contexts[combo.judge], llm)
+                output = {"relations": relations}
+            except StepFailed as exc:
+                status, error = "failed", f"{exc.step or 'link'}: {exc.message}"
+                span.fail(exc)
+            output = tracing.with_ids(output)
         with engine.begin() as conn:
             derived.save_measurement(
                 conn, item, combo.judge, plan.model, plan.embed_model, status, error, relations, output

@@ -17,6 +17,7 @@ from sqlalchemy.engine import Connection, Engine
 
 from ..db import skill_expansions
 from ..userdata import collapse, name_key
+from . import tracing
 from .pipeline import LLM, Cancelled, StepFailed, conform
 
 NAME = "skill-expand"
@@ -74,7 +75,7 @@ class SkillExpander:
         lines = [f"Skill: {name}"]
         if context:
             lines.append(("In the posting" if side == "posting" else "On the CV") + f': "{context}"')
-        response = conform("expand", llm.chat_json(SYSTEM, "\n".join(lines), SCHEMA), SCHEMA)
+        response = conform("expand", tracing.chat(llm, SYSTEM, "\n".join(lines), SCHEMA), SCHEMA)
         return clean(name, response["phrases"]), response
 
 
@@ -141,22 +142,24 @@ class Expanded:
 def expand_all(engine: Engine, llm: LLM, model: str, wanted: list[Wanted],
                should_stop: Callable[[], bool] = lambda: False) -> Expanded:
     """Request each expansion, each stored in its own transaction so an interrupted pass keeps what it finished.
-    Model calls happen outside transactions. Raises Cancelled (between requests) and Unreachable."""
+    Model calls happen outside transactions. Raises Cancelled (between requests) and Unreachable. While tracing
+    is on the pass is one step span, which each stored output names."""
     from . import derived
 
     result = Expanded()
-    for item in wanted:
-        if should_stop():
-            raise Cancelled()
-        phrases, status, error, output = [], "succeeded", None, {}
-        try:
-            phrases, output = EXPANDER.expand(item.side, item.name, item.context, llm)
-        except StepFailed as exc:
-            status, error = "failed", f"{exc.step or 'expand'}: {exc.message}"
-        with engine.begin() as conn:
-            derived.save_expansion(conn, item, STEP, model, status, error, phrases, output)
-        if status == "succeeded":
-            result.succeeded += 1
-        else:
-            result.failed += 1
+    with tracing.step("expand", STEP):
+        for item in wanted:
+            if should_stop():
+                raise Cancelled()
+            phrases, status, error, output = [], "succeeded", None, {}
+            try:
+                phrases, output = EXPANDER.expand(item.side, item.name, item.context, llm)
+            except StepFailed as exc:
+                status, error = "failed", f"{exc.step or 'expand'}: {exc.message}"
+            with engine.begin() as conn:
+                derived.save_expansion(conn, item, STEP, model, status, error, phrases, tracing.with_ids(output))
+            if status == "succeeded":
+                result.succeeded += 1
+            else:
+                result.failed += 1
     return result

@@ -22,12 +22,13 @@ from __future__ import annotations
 import re
 import string
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ..userdata import MODEL_LEVELS, level_rank, name_key, source_kind
-from . import validate
+from . import tracing, validate
 from .pipeline import LLM, SKILL_KINDS, Cancelled, DocumentResult, StepFailed, _Recorder, conform
 from .segment import batches, lines
 from .terms import terms
@@ -627,53 +628,55 @@ def run_document(text: str, llm: LLM, should_stop: Callable[[], bool] = lambda: 
     built = _Built()
     current = "sections"
 
-    def step(name: str, impl) -> _Recorder:
+    @contextmanager
+    def step(name: str, impl) -> Iterator[_Recorder]:
         nonlocal current
         if should_stop():
             raise Cancelled()
         current = name
         recorder = _Recorder(llm)
         trace["steps"].append({"step": name, "name": impl.name, "version": impl.version, "calls": recorder.calls})
-        return recorder
+        with tracing.step(name, f"{impl.name}@{impl.version}"):
+            yield recorder
 
     try:
         began = time.monotonic()
-        step("sections", SECTIONS)
-        sections = SECTIONS.sections(text)
-        trace["sections"] = [[s.name, s.kind, len(s.lines)] for s in sections]
+        with step("sections", SECTIONS):
+            sections = SECTIONS.sections(text)
+            trace["sections"] = [[s.name, s.kind, len(s.lines)] for s in sections]
 
-        model = step("lines", LABELLER)
         answers: dict[int, dict] = {}
-        for i, section in enumerate(sections):
-            if section.kind in LABELLED_KINDS:
-                if should_stop():
-                    raise Cancelled()
-                answers[i] = LABELLER.label(text, section, model)
+        with step("lines", LABELLER) as model:
+            for i, section in enumerate(sections):
+                if section.kind in LABELLED_KINDS:
+                    if should_stop():
+                        raise Cancelled()
+                    answers[i] = LABELLER.label(text, section, model)
 
-        step("records", RECORDS)
-        for i, section in enumerate(sections):
-            if section.kind in LABELLED_KINDS or section.kind == "claims":
-                RECORDS.build(text, section, answers.get(i, {}), built)
+        with step("records", RECORDS):
+            for i, section in enumerate(sections):
+                if section.kind in LABELLED_KINDS or section.kind == "claims":
+                    RECORDS.build(text, section, answers.get(i, {}), built)
 
-        model = step("skills", SKILLS)
         found: list[CvSkill] = []
-        for section in sections:
-            if section.kind in SKILL_SECTION_KINDS:
-                if should_stop():
-                    raise Cancelled()
-                found.extend(SKILLS.extract(text, section, model))
-        claims = check_claims(text, found, built)
+        with step("skills", SKILLS) as model:
+            for section in sections:
+                if section.kind in SKILL_SECTION_KINDS:
+                    if should_stop():
+                        raise Cancelled()
+                    found.extend(SKILLS.extract(text, section, model))
+            claims = check_claims(text, found, built)
 
-        model = step("part_of", PART_OF)
-        part_of = PART_OF.links(built.records, model, built)
+        with step("part_of", PART_OF) as model:
+            part_of = PART_OF.links(built.records, model, built)
         trace["seconds"] = round(time.monotonic() - began, 3)
     except StepFailed as exc:
         error = f"{exc.step or current}: {exc.message}"
         trace["error"] = error
-        return DocumentResult("failed", error, started_at, datetime.now(UTC), None, trace)
+        return DocumentResult("failed", error, started_at, datetime.now(UTC), None, tracing.with_ids(trace))
 
     if should_stop():
         raise Cancelled()
     suggestions = {"record": built.records, "claim": claims, "part_of": part_of, "highlight": built.highlights}
     trace["unverified"] = built.unverified
-    return DocumentResult("succeeded", None, started_at, datetime.now(UTC), suggestions, trace)
+    return DocumentResult("succeeded", None, started_at, datetime.now(UTC), suggestions, tracing.with_ids(trace))

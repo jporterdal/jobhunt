@@ -21,7 +21,7 @@ from sqlalchemy.engine import Connection, Engine
 from ..db import claims, documents, llm_jobs, posting_snapshots
 from ..store import latest_snapshot
 from ..userdata import UserDataError, get_setting
-from . import cv, derived, links
+from . import cv, derived, links, tracing
 from .pipeline import (
     CURRENT_SKILLS,
     Cancelled,
@@ -234,68 +234,91 @@ def _cancelled_meanwhile(conn: Connection, job_id: int) -> bool:
 
 
 def _run_posting(engine: Engine, client, job, num_ctx: int, embed) -> str:
-    with engine.connect() as conn:
-        text = conn.execute(
-            select(posting_snapshots.c.description_text).where(posting_snapshots.c.id == job.snapshot_id)
-        ).scalar_one()
-    steps = steps_from_id(job.pipeline)
-    llm = client.for_model(job.model, num_ctx)
-    result = run_pipeline(text, llm, steps, should_stop=lambda: not _still_running(engine, job.id))
-    with engine.begin() as conn:
-        if _cancelled_meanwhile(conn, job.id):
-            return "cancelled"
-        run_id = derived.save_run(conn, job.job_id, job.snapshot_id, job.model, job.pipeline, result, "app")
-        final = "done" if result.status == "succeeded" else "failed"
-        conn.execute(
-            update(llm_jobs)
-            .where(llm_jobs.c.id == job.id)
-            .values(status=final, error=result.error, enrichment_id=run_id, finished_at=utcnow())
-        )
-        if final == "done":
-            enqueue_links(conn)  # the posting's skills may have changed
+    with tracing.run(
+        "posting", origin="app", job_id=job.id, posting_id=job.job_id, snapshot_id=job.snapshot_id, model=job.model,
+        pipeline=job.pipeline,
+    ) as span:
+        with engine.connect() as conn:
+            text = conn.execute(
+                select(posting_snapshots.c.description_text).where(posting_snapshots.c.id == job.snapshot_id)
+            ).scalar_one()
+        steps = steps_from_id(job.pipeline)
+        llm = client.for_model(job.model, num_ctx)
+        result = run_pipeline(text, llm, steps, should_stop=lambda: not _still_running(engine, job.id))
+        with engine.begin() as conn:
+            if _cancelled_meanwhile(conn, job.id):
+                span.finish("cancelled")
+                return "cancelled"
+            run_id = derived.save_run(conn, job.job_id, job.snapshot_id, job.model, job.pipeline, result, "app")
+            final = "done" if result.status == "succeeded" else "failed"
+            conn.execute(
+                update(llm_jobs)
+                .where(llm_jobs.c.id == job.id)
+                .values(status=final, error=result.error, enrichment_id=run_id, finished_at=utcnow())
+            )
+            if final == "done":
+                enqueue_links(conn)  # the posting's skills may have changed
+        span.set(run_id=run_id)
+        span.finish(result.status, result.error)
     return final
 
 
 def _run_document(engine: Engine, client, job, num_ctx: int, embed) -> str:
-    cv.check_pipeline(job.pipeline)
-    with engine.connect() as conn:
-        text = conn.execute(select(documents.c.text_content).where(documents.c.id == job.document_id)).scalar_one()
-    if not text:
-        raise UserDataError("the document has no extracted text")
-    llm = client.for_model(job.model, num_ctx)
-    result = cv.run_document(text, llm, should_stop=lambda: not _still_running(engine, job.id))
-    with engine.begin() as conn:
-        if _cancelled_meanwhile(conn, job.id):
-            return "cancelled"
-        # Only suggestions are stored: the profile, and so link judging, waits for the user to accept them.
-        run_id = derived.save_document_run(
-            conn, job.document_id, hashlib.sha256(text.encode()).hexdigest(), job.model, job.pipeline, result
-        )
-        final = "done" if result.status == "succeeded" else "failed"
-        conn.execute(
-            update(llm_jobs)
-            .where(llm_jobs.c.id == job.id)
-            .values(status=final, error=result.error, document_run_id=run_id, finished_at=utcnow())
-        )
+    with tracing.run(
+        "document", origin="app", job_id=job.id, document_id=job.document_id, model=job.model, pipeline=job.pipeline
+    ) as span:
+        cv.check_pipeline(job.pipeline)
+        with engine.connect() as conn:
+            text = conn.execute(
+                select(documents.c.text_content).where(documents.c.id == job.document_id)
+            ).scalar_one()
+        if not text:
+            raise UserDataError("the document has no extracted text")
+        llm = client.for_model(job.model, num_ctx)
+        result = cv.run_document(text, llm, should_stop=lambda: not _still_running(engine, job.id))
+        with engine.begin() as conn:
+            if _cancelled_meanwhile(conn, job.id):
+                span.finish("cancelled")
+                return "cancelled"
+            # Only suggestions are stored: the profile, and so link judging, waits for the user to accept them.
+            run_id = derived.save_document_run(
+                conn, job.document_id, hashlib.sha256(text.encode()).hexdigest(), job.model, job.pipeline, result
+            )
+            final = "done" if result.status == "succeeded" else "failed"
+            conn.execute(
+                update(llm_jobs)
+                .where(llm_jobs.c.id == job.id)
+                .values(status=final, error=result.error, document_run_id=run_id, finished_at=utcnow())
+            )
+        span.set(run_id=run_id)
+        span.finish(result.status, result.error)
     return final
 
 
 def _run_links(engine: Engine, client, job, num_ctx: int, embed: str) -> str:
-    try:
-        result = links.judge_links(
-            engine, client, job.model, num_ctx, embed, job.pipeline.endswith(links.ALL_SCOPE),
-            should_stop=lambda: not _still_running(engine, job.id),
-        )
-    except StepFailed as exc:  # embedding failed: nothing was stored
-        _finish(engine, job.id, status="failed", error=f"{exc.step or 'embed'}: {exc.message}")
-        return "failed"
-    error = f"{result.failed} of {result.planned} judgments failed" if result.failed else None
-    with engine.begin() as conn:
-        if _cancelled_meanwhile(conn, job.id):
-            return "cancelled"
-        conn.execute(
-            update(llm_jobs).where(llm_jobs.c.id == job.id).values(status="done", error=error, finished_at=utcnow())
-        )
+    with tracing.run(
+        "links", origin="app", job_id=job.id, model=job.model, pipeline=job.pipeline, embed_model=embed
+    ) as span:
+        try:
+            result = links.judge_links(
+                engine, client, job.model, num_ctx, embed, job.pipeline.endswith(links.ALL_SCOPE),
+                should_stop=lambda: not _still_running(engine, job.id),
+            )
+        except StepFailed as exc:  # embedding failed: nothing was stored
+            error = f"{exc.step or 'embed'}: {exc.message}"
+            _finish(engine, job.id, status="failed", error=error)
+            span.finish("failed", error)
+            return "failed"
+        span.set(planned=result.planned, judged=result.judged, failed=result.failed)
+        error = f"{result.failed} of {result.planned} judgments failed" if result.failed else None
+        with engine.begin() as conn:
+            if _cancelled_meanwhile(conn, job.id):
+                span.finish("cancelled")
+                return "cancelled"
+            conn.execute(
+                update(llm_jobs).where(llm_jobs.c.id == job.id).values(status="done", error=error, finished_at=utcnow())
+            )
+        span.finish("succeeded")
     return "done"
 
 

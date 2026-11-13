@@ -539,6 +539,15 @@ def rejected_keys(conn: Connection, job_id: int) -> dict[str, str | None]:
     )
 
 
+def run_trace_id(output_json: str | None) -> str | None:
+    """The trace id a stored model result names (its output's "otel" entry, written while tracing was on)."""
+    try:
+        otel = json.loads(output_json or "{}").get("otel")
+    except (ValueError, AttributeError):
+        return None
+    return otel.get("trace_id") if isinstance(otel, dict) else None
+
+
 def enrichment_panel(conn: Connection, job_id: int, run_id: int | None = None) -> dict | None:
     """The "Model says" panel: the chosen (or latest) app run with its items, every app run, and per-skill flags.
     None when the posting has no app runs; eval runs are never shown."""
@@ -565,6 +574,9 @@ def enrichment_panel(conn: Connection, job_id: int, run_id: int | None = None) -
     if not runs:
         return None
     run = next((r for r in runs if r["id"] == run_id), runs[0])
+    run["trace_id"] = run_trace_id(
+        conn.execute(select(posting_enrichments.c.output_json).where(posting_enrichments.c.id == run["id"])).scalar()
+    )
 
     marked, rejected = _marked_keys(conn, job_id), rejected_keys(conn, job_id)
     skill_items = [

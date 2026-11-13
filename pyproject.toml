@@ -36,6 +36,8 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
+# Optional OpenTelemetry tracing of model work (docs/tracing.md); without it tracing stays off.
+otel = ["opentelemetry-sdk>=1.45", "opentelemetry-exporter-otlp-proto-http>=1.45"]
 dev = ["pytest>=8", "ruff>=0.6", "pre-commit>=3.7"]
 
 [project.scripts]
@@ -71,6 +73,7 @@ extend-immutable-calls = ["jobhunt.queries.ListFilters", "jobhunt.tailor.Choice"
 # Fixtures imported from test_links (`db`) are pytest parameters, which F811 reads as redefinitions.
 "tests/test_expand.py" = ["F811"]
 "tests/test_link_eval.py" = ["F811"]
+"tests/test_tracing.py" = ["F811"]
 # Model prompts and ODF markup: rewrapping them would change a step's output or the exported document.
 "src/jobhunt/enrich/skills.py" = ["E501"]
 "src/jobhunt/cvdoc/styles.py" = ["E501"]
