@@ -20,11 +20,11 @@ The system SHALL provide a command, `jobhunt mcp`, that runs an MCP server over 
 - **THEN** `jobhunt import`, `serve`, `eval` and `demo` work as before, and every test other than the MCP protocol tests passes
 
 ### Requirement: Sharing is named at start-up
-The server SHALL share nothing unless the user names what to share when starting it, with `--share` followed by one or more scope names separated by commas. The scopes SHALL be `postings` and `profile`. Without `--share`, or with a scope that doesn't exist, the command SHALL exit with status 2 before opening the database, and its message SHALL say that tool results go to the program that starts the server, that this program may send them to a model outside this machine, and what each scope shares. There SHALL be no default scope, no scope or value meaning every scope, and no environment variable that names scopes. The scopes SHALL be fixed when the command starts: no tool, protocol message, setting or web request SHALL change them. At start-up the server SHALL write to standard error which scopes it shares and from which database.
+The server SHALL share nothing unless the user names what to share when starting it, with `--share` followed by one or more scope names separated by commas. The scopes SHALL be `postings` and `profile`. Without `--share`, or with a scope that doesn't exist, the command SHALL exit with status 2 before opening the database, and its message SHALL say that tool results go to the program that starts the server, that this program may send them to a model outside this machine, what each scope shares, and where the documentation describes a set-up that keeps results on this machine. `jobhunt mcp --help` SHALL say the same. There SHALL be no default scope, no scope or value meaning every scope, and no environment variable that names scopes. The scopes SHALL be fixed when the command starts: no tool, protocol message, setting or web request SHALL change them. At start-up the server SHALL write to standard error which scopes it shares and from which database.
 
 #### Scenario: No scope named
 - **WHEN** a client starts `jobhunt mcp --db sqlite:////srv/jobhunt/demo/jobhunt.db`
-- **THEN** the command exits with status 2 without opening the database, and its message explains that results may be sent to a model outside this machine and lists the scopes
+- **THEN** the command exits with status 2 without opening the database, and its message explains that results may be sent to a model outside this machine, lists the scopes, and names the section of `docs/mcp.md` that sets up a client with a local model
 
 #### Scenario: Unknown scope
 - **WHEN** the user runs `jobhunt mcp --share postings,everything`
@@ -37,6 +37,17 @@ The server SHALL share nothing unless the user names what to share when starting
 #### Scenario: Start-up statement
 - **WHEN** the user runs `jobhunt mcp --share postings,profile`
 - **THEN** standard error names `postings` and `profile` as shared, and the database
+
+### Requirement: A fully local set-up is documented
+The MCP server's documentation (`docs/mcp.md`) SHALL include a worked example of a set-up in which tool results stay on this machine: an MCP client running on this machine that starts `jobhunt mcp` over standard input and output and whose model is served by a local Ollama server at a loopback address, with no cloud model, account or fallback involved. The example SHALL give the client's configuration in full (with an absolute `--db`, the demo database's), name the client and model versions it was checked with, say which of the client's own settings could send data elsewhere (cloud providers, telemetry, sync) and how they are turned off, and say how to confirm that the client's model address is a loopback one. It SHALL be the first way of connecting a client that the page describes, ahead of any client that may use a cloud model, and those clients SHALL be introduced with the reminder that their model may receive whatever the named scopes share. The example SHALL have been run against the demo database as written, and any example result it shows SHALL come from the demo's fictional data.
+
+#### Scenario: Reading how to connect a client
+- **WHEN** the user opens `docs/mcp.md` to connect a client
+- **THEN** the first set-up described uses a local Ollama model through a client on this machine, with a configuration that can be copied as written, and cloud-backed clients come after it
+
+#### Scenario: Following a pointer from the command
+- **WHEN** the command refuses to start without `--share`, or the user reads `jobhunt mcp --help`
+- **THEN** the text names the section of `docs/mcp.md` with the local set-up, and that section exists
 
 ### Requirement: Scopes decide which tools are offered
 The `postings` scope SHALL offer the tools `search_postings` and `get_posting`. The `profile` scope SHALL offer `posting_fit`, `profile_skills` and `recommendations`. A tool outside the named scopes SHALL NOT be listed to the client and SHALL NOT be callable. Each offered tool SHALL be listed with a description, a schema of its arguments and a schema of its result.
