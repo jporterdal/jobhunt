@@ -98,6 +98,7 @@ named by their kind; no exception event is recorded, since its message can quote
 - on each chat span, the system message (`gen_ai.system_instructions`), the user message (`gen_ai.input.messages`)
   and the answer (`gen_ai.output.messages`), as JSON text;
 - on each judging step, the posting skill's key (`jobhunt.link.posting_key`);
+- on each MCP tool call span, the call's arguments (`gen_ai.tool.call.arguments`; see [Tool calls](#tool-calls));
 - on failed spans, the error message as the status description.
 
 Embedding spans never carry their texts. `serve` prints `span content: on` when content is on.
@@ -106,6 +107,34 @@ Content makes the viewer one more place that holds your CV and postings, outside
 run below keeps traces in memory, so they go when it stops; Langfuse keeps them in its Postgres and ClickHouse
 databases and its MinIO object store (Docker volumes) until you delete them (`docker compose down -v` removes the
 volumes).
+
+## Tool calls
+
+`jobhunt mcp` ([docs/mcp.md](mcp.md)) takes the same `--otlp-endpoint` and `--trace-content` options, fixed at
+start-up and checked the same way; its start-up lines go to standard error, since standard output carries the
+protocol. Each tool call that starts a tool is one span, `tools/call <tool>` (kind server), and its own trace: there
+is no root span, and a client's trace context is not continued. Connecting, listing tools, and a call refused before
+the tool starts (an unknown or unshared tool, or arguments with nothing usable in them) emit no span, and the SDK's own
+per-message spans are never exported.
+
+| Attribute | Value | From |
+|---|---|---|
+| `mcp.method.name` | `tools/call` | MCP semantic conventions |
+| `gen_ai.operation.name` | `execute_tool` | GenAI conventions |
+| `gen_ai.tool.name` | the tool's name | GenAI conventions |
+| `network.transport` | `pipe` (standard input and output) | network conventions |
+| `jobhunt.posting.id` | the `job_id` argument, when the tool takes one | |
+| `jobhunt.mcp.result.items` | rows in the result's main list (1 for a single posting, have + don't have for a fit) | |
+| `jobhunt.mcp.result.total` | `search_postings`' number of matches | |
+| `jobhunt.mcp.result.chars` | length of the result as JSON text | |
+| `jobhunt.mcp.result.truncated` | `true` when a description was cut at 20,000 characters | |
+| `jobhunt.mcp.arguments.ignored` | how many of the call's arguments were left out ([docs/mcp.md](mcp.md#arguments-outside-a-tools-schema)), when any; never their names | |
+| `error.type` | `NotFound` for an unknown posting, else the exception's class | |
+| `gen_ai.tool.call.arguments` | the call's arguments as JSON, **with `--trace-content` only** | GenAI conventions |
+
+By default a tool span holds no search text, tag, title, company or skill name. A tool's result is never put on a
+span, with content on or off: its size and counts say what the client received, and a viewer holding results would
+be a second copy of your profile. A failed call carries its error message only with content on.
 
 ## Finding a stored run's trace
 

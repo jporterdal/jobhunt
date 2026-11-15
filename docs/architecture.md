@@ -47,7 +47,7 @@ what came from a posting, what you wrote and what a model suggested.
 
 ```
 src/jobhunt/
-    cli.py            import, inbox prune, serve, eval, profile reset, privacy-check, demo
+    cli.py            import, inbox prune, serve, eval, mcp, profile reset, privacy-check, demo
     parsers/          the parser plug-in protocol and the built-in posting-file parser
     sanitize.py       description HTML -> allowlisted HTML and plain text
     importer.py       every installed parser on every inbox file; one transaction per file
@@ -56,6 +56,8 @@ src/jobhunt/
     userdata.py       the only writer of user-authored data
     queries.py        read models for every page (no Flask)
     recommend.py      match scores, posting ranking, skill pools and gains (computed on each view)
+    mcp_tools.py      the MCP server's tools as plain functions over the read models (no `mcp` import)
+    mcp_server.py     the MCP server: the shared scopes' tools over stdio (the only `mcp` importer)
     tailor.py         a CV proposal for a posting (computed on each view)
     cvdoc/            CV layout and ODT export
     documents.py      content-addressed document store and text extraction (PDF, DOCX, ODT, TXT, MD)
@@ -79,10 +81,14 @@ Route handlers stay thin: logic lives in `userdata.py`, `queries.py`, `recommend
 
 ## Models
 
-Models run on a local [Ollama](https://ollama.com) server only; no data leaves the machine. Every request uses
-temperature 0, a fixed seed and a JSON schema. Text positions are character offsets into the stored description, so
-a step can label text but never rewrite it. Every quote the model returns is checked against the text, and an
-unverified item is stored for inspection but can't be accepted.
+Models run on a local [Ollama](https://ollama.com) server only; jobhunt itself sends no data to another machine. The
+one exception by design is `jobhunt mcp` ([docs/mcp.md](mcp.md)), which gives the scopes named when it starts
+(postings, profile) to the MCP client that started it; that client may send them on to a model elsewhere, so the docs
+lead with a client whose model runs on your own Ollama server ([Keeping everything on this
+machine](mcp.md#keeping-everything-on-this-machine)). Every request uses temperature 0, a fixed seed and a JSON
+schema. Text positions are character offsets into the stored description, so a step can label text but never rewrite
+it. Every quote the model returns is checked against the text, and an unverified item is stored for inspection but
+can't be accepted.
 
 Each step has a name and version (`atomic@2`, `link-judge@5`), and a run records the pipeline id it used. A step
 whose output changes gets a new version, so old and new runs are never compared as equal. The app uses one method

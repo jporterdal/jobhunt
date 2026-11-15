@@ -7,8 +7,8 @@ and nothing is imported, unless a command was started with a trace endpoint and 
 
 Spans hold no text by default: no posting, document, prompt or answer text, no skill names and no error
 messages, only integer ids, names of methods and models, counts and durations. `content=True`
-(`--trace-content`) adds each chat call's messages and answer, a judging step's posting skill key, and failed
-spans' error messages.
+(`--trace-content`) adds each chat call's messages and answer, a judging step's posting skill key, an MCP tool
+call's arguments, and failed spans' error messages. An MCP tool's result is never put on a span.
 
 The module keeps its own provider and tracer and never sets OpenTelemetry's global provider.
 """
@@ -65,6 +65,25 @@ RUN_ATTRIBUTES = {
     "failed": "jobhunt.links.failed",
 }
 RUN_STATUSES = ("succeeded", "failed", "cancelled")
+
+# MCP tool calls (`jobhunt mcp`): MCP and GenAI semantic conventions (Development stability, same version as
+# above) where they name one. Arguments are content; a tool's result is never put on a span.
+MCP_METHOD = "mcp.method.name"
+MCP_TOOLS_CALL = "tools/call"
+GEN_AI_TOOL_NAME = "gen_ai.tool.name"
+GEN_AI_TOOL_ARGUMENTS = "gen_ai.tool.call.arguments"  # content only
+EXECUTE_TOOL = "execute_tool"
+NETWORK_TRANSPORT = "network.transport"
+TRANSPORT_PIPE = "pipe"  # stdio
+# What a tool call handle's set() accepts (as RUN_ATTRIBUTES for runs): counts, sizes and ids, never text.
+TOOL_ATTRIBUTES = {
+    "posting_id": "jobhunt.posting.id",
+    "items": "jobhunt.mcp.result.items",
+    "total": "jobhunt.mcp.result.total",
+    "chars": "jobhunt.mcp.result.chars",
+    "truncated": "jobhunt.mcp.result.truncated",
+    "ignored": "jobhunt.mcp.arguments.ignored",  # how many arguments were left out (their names are content)
+}
 
 # Ollama's answer fields -> attributes; durations are nanoseconds in the answer and seconds on the span.
 USAGE_COUNTS = {"prompt_eval_count": GEN_AI_INPUT_TOKENS, "eval_count": GEN_AI_OUTPUT_TOKENS}
@@ -218,10 +237,12 @@ class _Span:
         self.span = span
         self.finished = False
 
+    attributes = RUN_ATTRIBUTES
+
     def set(self, **attrs) -> None:
         for key, value in attrs.items():
             if value is not None:
-                self.span.set_attribute(RUN_ATTRIBUTES[key], value)
+                self.span.set_attribute(self.attributes[key], value)
 
     def finish(self, status: str, error: str | None = None) -> None:
         """The run's outcome: 'succeeded', 'failed' (a StepFailed error) or 'cancelled'."""
@@ -238,15 +259,30 @@ class _Span:
         _error(self.span, type(exc).__name__, _message(exc))
 
 
+class _ToolSpan(_Span):
+    """A tool call span's handle: set() accepts TOOL_ATTRIBUTES only."""
+
+    attributes = TOOL_ATTRIBUTES
+
+
 @contextmanager
-def _span(name: str, kind: str = "INTERNAL", run: bool = False) -> Iterator[_Span]:
+def _span(
+    name: str, kind: str = "INTERNAL", run: bool = False, new_trace: bool = False, handle_type: type = _Span
+) -> Iterator[_Span]:
     """A current span ended on exit. An exception passing through gives it an error status and `error.type` (the
     message only with content on; no exception event, whose message could quote model output) and is raised
-    again unchanged. A run span also records 'cancelled' or 'failed' as its status."""
+    again unchanged. A run span also records 'cancelled' or 'failed' as its status. `new_trace` starts a trace of
+    its own whatever context is current."""
+    context = None
+    if new_trace:
+        from opentelemetry.context import Context
+
+        context = Context()
     with _tracer.start_as_current_span(
-        name, kind=getattr(_otel.SpanKind, kind), record_exception=False, set_status_on_exception=False
+        name, context=context, kind=getattr(_otel.SpanKind, kind), record_exception=False,
+        set_status_on_exception=False,
     ) as span:
-        handle = _Span(span)
+        handle = handle_type(span)
         try:
             yield handle
         except BaseException as exc:
@@ -295,6 +331,25 @@ def step(name: str, method: str | None, posting_key: str | None = None) -> Itera
             handle.span.set_attribute(STEP_METHOD, method)
         if _content and posting_key is not None:
             handle.span.set_attribute(POSTING_KEY, posting_key)
+        yield handle
+
+
+@contextmanager
+def tool(name: str, arguments: dict | None = None) -> Iterator[_ToolSpan | _Off]:
+    """An MCP tool call span (`tools/call <tool>`, kind server), a trace of its own: no root span, and a client's
+    trace context is never continued. Its handle's set() takes TOOL_ATTRIBUTES; `arguments` are content, attached
+    only with content on."""
+    if _tracer is None:
+        yield OFF
+        return
+    with _span(f"{MCP_TOOLS_CALL} {name}", kind="SERVER", new_trace=True, handle_type=_ToolSpan) as handle:
+        span = handle.span
+        span.set_attribute(MCP_METHOD, MCP_TOOLS_CALL)
+        span.set_attribute(GEN_AI_OPERATION, EXECUTE_TOOL)
+        span.set_attribute(GEN_AI_TOOL_NAME, name)
+        span.set_attribute(NETWORK_TRANSPORT, TRANSPORT_PIPE)
+        if _content and arguments is not None:
+            span.set_attribute(GEN_AI_TOOL_ARGUMENTS, json.dumps(arguments, ensure_ascii=False, sort_keys=True))
         yield handle
 
 

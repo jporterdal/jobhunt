@@ -64,6 +64,21 @@ The `postings` scope SHALL offer the tools `search_postings` and `get_posting`. 
 - **WHEN** the server runs with `--share postings,profile`
 - **THEN** all five tools are listed, each with its argument and result schemas
 
+### Requirement: Tool descriptions carry what a model needs
+The server SHALL send fixed instructions when a client connects, and, since a client need not pass them on to its model, each tool's description and its arguments' descriptions SHALL also state what of them applies to that tool: that every stored posting is one the user saved; that a posting's `job_id` is jobhunt's own id, never the number in the posting's URL, which tools return it, and that `search_postings` finds a posting by title, company or that number; that `interest` and `fit` are the user's own ratings, not match scores; that scores, credits, gains and rankings are jobhunt's own figures, the same its web pages show; and that each posting's `url` is its original web address. The `search_postings` descriptions SHALL also state how `q` is matched and that `workplace` is one value. The instructions and descriptions SHALL state facts about the tools and the data, and SHALL NOT tell the model what to do. They SHALL hold no stored data.
+
+#### Scenario: A client that passes on only the tools
+- **WHEN** a client gives its model each tool's name, description and argument schema but not the server's instructions
+- **THEN** the descriptions of `get_posting` and `posting_fit` still state that a `job_id` is never the number in a posting's URL and that `search_postings` returns it, and every tool that returns postings states that each posting's `url` is its original web address
+
+#### Scenario: Facts, not instructions
+- **WHEN** the tools are listed
+- **THEN** no description or argument description tells the model to cite, report, recompute, use or leave out anything, or which filters to set
+
+#### Scenario: Descriptions hold no stored data
+- **WHEN** the tools are listed on a database with postings, tags and profile skills
+- **THEN** no description contains a stored title, company, tag, skill name or external id
+
 ### Requirement: The server writes nothing
 The server SHALL NOT change the database, the documents folder or the inbox: it SHALL add, change or delete no row and no file, queue no job, and record nothing about the calls it answers. It SHALL open the database so that the database itself refuses a write, on SQLite and on Postgres. It SHALL NOT create or upgrade a database: when the database's schema isn't the current one, or an SQLite database file doesn't exist, the command SHALL exit with status 2, leaving the database unchanged and creating no file or folder, and its message SHALL say how to upgrade the database with another command. The server SHALL offer no tool that writes.
 
@@ -132,7 +147,7 @@ A posting SHALL be identified to clients by its integer posting id, the same num
 - **THEN** the result has no `interest` field
 
 ### Requirement: Searching postings
-`search_postings` SHALL return stored postings from their latest version, filtered and sorted as the postings list is: by text (in the title, company or description, or an exact external id), tag, minimum interest, unrated only, workplace type, application status (including any and none), dismissed postings (hidden by default, included, or only), and sorted by last seen (the default), first seen, posted date or interest. It SHALL return at most `limit` postings (20 by default, 50 at most) starting at `offset`, with the total number of matches and, when more remain, the offset of the next page. Each posting SHALL carry, besides its id, title, company and URL: location, workplace type, posted date, first and last seen, and the user's interest, fit, tags, whether it is dismissed and its application's status. The same filters and sort SHALL give the same postings in the same order as the postings list.
+`search_postings` SHALL return stored postings from their latest version, filtered and sorted as the postings list is: by text (in the title, company or description, or an exact external id), tag, minimum interest, unrated only, workplace type, application status (including any and none), dismissed postings (hidden by default, included, or only), and sorted by last seen (the default), first seen, posted date or interest. It SHALL return at most `limit` postings (20 by default, 50 at most) starting at `offset`, with the total number of matches and, when more remain, the offset of the next page. When any filter left postings out, the result SHALL name the filters applied, including the default that hides dismissed postings, and, for each of them, the number of postings that match with that filter alone removed and the rest kept; a search with no filter applied SHALL have neither. Each posting SHALL carry, besides its id, title, company and URL: location, workplace type, posted date, first and last seen, and the user's interest, fit, tags, whether it is dismissed and its application's status. The same filters and sort SHALL give the same postings in the same order as the postings list.
 
 #### Scenario: Filtered search
 - **WHEN** 3 stored postings mention "Airflow", one of them dismissed, and a client calls `search_postings` with `q` "Airflow"
@@ -145,6 +160,14 @@ A posting SHALL be identified to clients by its integer posting id, the same num
 #### Scenario: Same order as the list
 - **WHEN** a client calls `search_postings` with `sort` `interest` and `workplace` `Remote`
 - **THEN** the postings and their order are those the postings list shows for the same filter and sort
+
+#### Scenario: What hid a posting
+- **WHEN** the only stored "Machine Learning Engineer" posting is Hybrid and a client calls `search_postings` with `q` "Machine Learning Engineer" and `workplace` `Remote`
+- **THEN** the result has `total` 0, names `q`, `workplace` and the default dismissed filter as the filters applied, and gives 1 as the number of matches with `workplace` removed
+
+#### Scenario: Nothing left out
+- **WHEN** a client calls `search_postings` with `dismissed` `included` and no other filter
+- **THEN** the result names no filters applied and gives no counts without them
 
 ### Requirement: Reading one posting
 `get_posting` SHALL take a posting id and return the posting's latest version: the fields `search_postings` returns for it, its source, employment type, the precision of its posted date, how many versions are stored, its compared details, and its description as plain text. A description longer than 20,000 characters SHALL be cut at that length; the result SHALL always give the description's full length and SHALL say when it was cut.
@@ -180,7 +203,7 @@ A posting SHALL be identified to clients by its integer posting id, the same num
 - **THEN** `profile_skills` returns a count of 0 and an empty list
 
 ### Requirement: Recommendations
-`recommendations` SHALL return the two lists the Insights page shows, with the same members, order and figures: the recommended postings (each with its score, its score weighted by interest, and its largest gaps) and the skills to gain (each with its gain, how many postings it would improve, the other names pooled with it, and the postings it improves most), together with how many postings were considered and how many were left out for having no skills. It SHALL accept a list of workplace types that narrows the postings both lists consider, as the page's workplace filter does; an empty list or all three types SHALL mean no filter, and the result SHALL state the filter applied.
+`recommendations` SHALL return the two lists the Insights page shows, with the same members, order and figures: the recommended postings (each with its score, its score weighted by interest, and its largest gaps) and the skills to gain (each with its gain, how many postings it would improve, the other names pooled with it, and the postings it improves most), together with how many postings were considered and how many were left out for having no skills. It SHALL accept a list of workplace types that narrows the postings both lists consider, as the page's workplace filter does; an empty list or all three types SHALL mean no filter, and the result SHALL state the filter applied and, with a filter, how many postings would be considered without it.
 
 #### Scenario: Same ranking as Insights
 - **WHEN** a client calls `recommendations` with no arguments
@@ -188,19 +211,31 @@ A posting SHALL be identified to clients by its integer posting id, the same num
 
 #### Scenario: Workplace filter
 - **WHEN** a client calls `recommendations` with `workplace` `["Remote", "Hybrid"]`
-- **THEN** only postings whose latest version is Remote or Hybrid are considered in both lists, and the result names those two types as the filter
+- **THEN** only postings whose latest version is Remote or Hybrid are considered in both lists, and the result names those two types as the filter and gives the number considered without it
 
 ### Requirement: Tool errors
-A call that names a posting id that doesn't exist SHALL fail with an error saying no posting has that id. A call with an argument outside the tool's listed schema (an unknown value, a number out of range, a missing or unknown argument) SHALL fail with an error naming the argument, and the tool SHALL NOT run; no argument SHALL be silently replaced by a default. A failed call SHALL return no data, and an error's text SHALL NOT quote stored text or the message of an unexpected failure.
+A call that names a posting id that doesn't exist SHALL fail with an error saying no posting has that id. Each tool's listed input schema SHALL allow no argument it doesn't name. A call's arguments SHALL be checked one by one against that schema: an argument the tool doesn't have, or one whose value is outside the schema (an unknown value, a number out of range, a value of the wrong type), SHALL be ignored, and the tool SHALL run with the remaining arguments and the defaults of the rest. The result SHALL then begin with `warnings`, one sentence for each ignored argument naming it, saying why (for a value, what the schema accepts) and that it was ignored, and, where a default stands in, that the default was used; no argument SHALL be ignored or replaced by a default without a warning. A warning SHALL NOT quote the value sent. A call SHALL fail without running the tool, with an error naming each argument and what was wrong with it, when it gave arguments and none of them could be used, or when a required argument (`job_id`) is missing or unusable; a call that gives no arguments at all to a tool that needs none SHALL run. A failed call SHALL return no data, and an error's text SHALL NOT quote stored text or the message of an unexpected failure.
 
 #### Scenario: Unknown posting
 - **WHEN** a client calls `get_posting` with `job_id` 999 and no such posting exists
 - **THEN** the call fails with "No posting with id 999." and returns no data
 
-#### Scenario: Unknown sort
-- **WHEN** a client calls `search_postings` with `sort` `salary`
-- **THEN** the call fails naming `sort`, and no postings are returned
+#### Scenario: An argument the tool doesn't have
+- **WHEN** a client calls `search_postings` with `q` "Machine Learning Engineer" and `company` "Example Labs"
+- **THEN** the search runs with `q` alone, and the result begins with a warning that `company` is not an argument of `search_postings` and was ignored
 
-#### Scenario: Limit out of range
-- **WHEN** a client calls `search_postings` with `limit` 500
-- **THEN** the call fails naming `limit`, instead of returning 50 or 500 postings
+#### Scenario: A value outside the schema
+- **WHEN** a client calls `search_postings` with `tag` "shortlist" and `limit` 500
+- **THEN** the search runs with the tag and the default limit of 20, and the result warns that `limit` was outside the schema (at most 50), was ignored and its default used, instead of returning 50 or 500 postings without saying so
+
+#### Scenario: Nothing usable
+- **WHEN** a client calls `search_postings` with only `sort` `salary`, or `profile_skills` with any argument
+- **THEN** the call fails naming the argument and what was wrong with it, and the tool doesn't run
+
+#### Scenario: Missing job_id
+- **WHEN** a client calls `get_posting` with `id` 3 and no `job_id`
+- **THEN** the call fails saying that `id` is not an argument and `job_id` is required
+
+#### Scenario: No arguments
+- **WHEN** a client calls `search_postings` or `recommendations` with no arguments
+- **THEN** the call runs with the defaults, and the result has no warnings

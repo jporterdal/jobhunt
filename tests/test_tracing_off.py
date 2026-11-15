@@ -32,12 +32,14 @@ def test_helpers_pass_through():
     assert tracing.embed(client, "nomic-embed-text:latest", ["Python"]) == client.embed("nomic-embed-text:latest",
                                                                                          ["Python"])
     for manager in (tracing.root("eval skills"), tracing.run("posting", origin="app", title="anything"),
-                    tracing.step("skills", "atomic@2", posting_key="python")):
+                    tracing.step("skills", "atomic@2", posting_key="python"),
+                    tracing.tool("search_postings", {"q": "Example Robotics"})):
         with manager as handle:
             handle.set(run_id=1, anything="goes")
             handle.fail(RuntimeError("x"))
             handle.finish("not even a status")
             assert not handle.recording
+            assert handle is tracing.OFF
     tracing.record_usage({"prompt_eval_count": 1})
     assert tracing.ids() is None and tracing.with_ids({"a": 1}) == {"a": 1}
     assert not tracing.enabled() and not tracing.content()
@@ -93,6 +95,8 @@ assert jobs.run_next(engine, FakeOllama()) in ("done", "failed")
 cv.run_document("EXPERIENCE\\nEngineer, Example Co", FakeOllama())
 tracing.setup(None)()
 OllamaClient("http://127.0.0.1:9")
+with tracing.tool("get_posting", {{"job_id": 1}}) as span:
+    span.set(posting_id=1, items=1)
 assert not [m for m in sys.modules if m.startswith("opentelemetry")], sorted(sys.modules)
 """
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, cwd=_repo_root())

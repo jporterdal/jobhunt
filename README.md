@@ -2,7 +2,9 @@
 
 A local-first job search tool. It keeps a searchable, annotated record of the job postings you collect. It matches
 them against a structured CV with local models, and tailors a CV for any posting. Your postings, notes and profile
-stay in a database on your machine, and model requests go only to a local [Ollama](https://ollama.com) server.
+stay in a database on your machine, and model requests go only to a local [Ollama](https://ollama.com) server. jobhunt
+itself sends nothing to another machine; the optional MCP server hands what you choose to share to the assistant that
+starts it, and [docs/mcp.md](docs/mcp.md) shows how to keep that local too.
 
 ![A posting with its skill match: what you have, what you don't, and the posting's text](docs/images/posting.png)
 
@@ -58,6 +60,11 @@ model (such as `nomic-embed-text`) pulled; choose them on the Settings page. Eve
 - **Model output is a suggestion, checked against the text.** Steps work on character offsets into the stored
   description, so they can label text but not rewrite it. A quote that isn't in the text can't be accepted.
 - **Local models only.** One configurable Ollama address, fixed at startup and never taken from the browser.
+- **An optional MCP server, read-only.** `jobhunt mcp` (with the `mcp` extra) lets an MCP client read your
+  postings, skill profile and match figures through five tools. Nothing is shared until you name it
+  (`--share postings,profile`), identity, records, notes and documents never are, and the server writes nothing.
+  Its results go to the client's model, which may be a cloud service: the docs lead with a client using a local
+  Ollama model ([Keeping everything on this machine](docs/mcp.md#keeping-everything-on-this-machine)).
 - **Optional tracing of model work.** With the `otel` extra and `--otlp-endpoint`, runs, steps and model calls
   (with Ollama's token counts and durations) go as OpenTelemetry traces to a viewer on this machine, without
   posting or CV text unless you ask. See [docs/tracing.md](docs/tracing.md).

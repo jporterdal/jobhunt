@@ -191,3 +191,55 @@ def test_demo_data_passes_the_pattern_check():
     assert len(files) > 11
     for path in files:
         assert scanner.scan_text(str(path), path.read_text(encoding="utf-8")) == [], path
+
+
+def test_mcp_results_match_their_output_schemas_on_the_demo(demo):
+    """Every tool's result for every demo posting fits the output schema the server advertises (closed: no field
+    the schema doesn't name), on realistic data: links of every kind, gaps, pools, aliases."""
+    pytest.importorskip("mcp", reason="the mcp extra isn't installed")
+    from jobhunt import mcp_tools
+
+    from .conftest import read_only_twin
+    from .mcp_schemas import check, output_schemas
+
+    engine, _client, ids, _built = demo
+    ro = read_only_twin(engine)
+    try:
+        validators = output_schemas(ro)
+        with ro.connect() as conn:
+            for job in ids.values():
+                check(validators, "get_posting", mcp_tools.get_posting(conn, job))
+                check(validators, "posting_fit", mcp_tools.posting_fit(conn, job))
+            check(validators, "search_postings", mcp_tools.search_postings(conn, dismissed="included", limit=50))
+            check(validators, "profile_skills", mcp_tools.profile_skills(conn))
+            for workplace in ([], ["Remote"], ["Hybrid", "On-site"]):
+                check(validators, "recommendations", mcp_tools.recommendations(conn, workplace=workplace))
+    finally:
+        ro.dispose()
+
+
+def test_every_mcp_tool_answers_on_the_demo(demo):
+    """Every MCP tool under both scopes, as plain functions on a read-only engine (add-mcp-server 7.6)."""
+    from jobhunt import mcp_tools
+
+    from .conftest import read_only_twin
+
+    engine, _client, ids, _built = demo
+    ro = read_only_twin(engine)
+    try:
+        with ro.connect() as conn:
+            for scope, tools in mcp_tools.SCOPES.items():
+                for name in tools:
+                    for job in ids.values():
+                        arguments = {"job_id": job} if name in ("get_posting", "posting_fit") else {}
+                        result = mcp_tools.TOOLS[name](conn, **arguments)
+                        assert result, (scope, name)
+            found = mcp_tools.search_postings(conn, dismissed="included", limit=50)
+            assert found["total"] == len(ids) and all(p["url"] for p in found["postings"])
+            fit = mcp_tools.posting_fit(conn, ids["9000000103"])
+            assert fit["score"] > 0 and fit["have"]
+            assert mcp_tools.profile_skills(conn)["count"] > 0
+            ranked = mcp_tools.recommendations(conn)
+            assert ranked["postings"] and ranked["skills"]
+    finally:
+        ro.dispose()

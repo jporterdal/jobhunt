@@ -1,5 +1,5 @@
 """Command line: `jobhunt import [PATH ...]`, `jobhunt inbox prune`, `jobhunt serve`, `jobhunt eval`,
-`jobhunt profile reset`, `jobhunt privacy-check` and `jobhunt demo`."""
+`jobhunt mcp`, `jobhunt profile reset`, `jobhunt privacy-check` and `jobhunt demo`."""
 
 from __future__ import annotations
 
@@ -79,23 +79,58 @@ def _otlp_endpoint(text: str) -> str:
     raise refused
 
 
-def _tracing_args(parser: argparse.ArgumentParser) -> None:
+def _tracing_args(parser: argparse.ArgumentParser, mcp: bool = False) -> None:
     """--otlp-endpoint and --trace-content, fixed at start-up like --ollama-url (see docs/tracing.md)."""
     parser.add_argument(
         "--otlp-endpoint",
         type=_otlp_endpoint,
         default=os.environ.get("JOBHUNT_OTLP_ENDPOINT") or None,
         metavar="URL",
-        help="send OpenTelemetry traces of model work to this OTLP/HTTP traces address on this machine, such as "
-        "http://localhost:4318/v1/traces; needs the otel extra (default: $JOBHUNT_OTLP_ENDPOINT, else no tracing)",
+        help=f"send OpenTelemetry traces of {'tool calls' if mcp else 'model work'} to this OTLP/HTTP traces address "
+        "on this machine, such as http://localhost:4318/v1/traces; needs the otel extra "
+        "(default: $JOBHUNT_OTLP_ENDPOINT, else no tracing)",
     )
     parser.add_argument(
         "--trace-content",
         action="store_true",
         default=os.environ.get("JOBHUNT_TRACE_CONTENT") == "1",
-        help="also put prompts, model answers and error messages in spans (default: on when "
-        "$JOBHUNT_TRACE_CONTENT is 1)",
+        help=(
+            "also put each tool call's arguments and error messages in spans, never its result"
+            if mcp else "also put prompts, model answers and error messages in spans"
+        ) + " (default: on when $JOBHUNT_TRACE_CONTENT is 1)",
     )
+
+
+# Where the docs set up a client whose model runs on this machine; tests check the heading exists.
+MCP_LOCAL_SECTION = "Keeping everything on this machine"
+MCP_DOCS = "docs/mcp.md"
+
+
+def mcp_warning() -> str:
+    """What sharing means, for the refusal message and `jobhunt mcp --help`."""
+    from .mcp_tools import SCOPE_SUMMARIES
+
+    scopes = "\n".join(f"  {name}: {summary}" for name, summary in SCOPE_SUMMARIES.items())
+    return (
+        "Tool results go to the program that starts this server, and that program may send them to a model "
+        "outside this machine. Name what it may receive with --share SCOPE[,SCOPE] (there is no default):\n"
+        f"{scopes}\n"
+        "Profile details, records, highlights, documents, notes, contacts and application events are never shared. "
+        f'To keep everything on this machine, use a client with a local Ollama model: see "{MCP_LOCAL_SECTION}" '
+        f"in {MCP_DOCS}. Try it on the demo database (jobhunt demo) first."
+    )
+
+
+def _scopes(text: str) -> tuple[str, ...]:
+    """argparse type for --share: one or more known scope names, comma-separated."""
+    from .mcp_tools import SCOPES
+
+    names = [n.strip() for n in text.split(",") if n.strip()]
+    unknown = [n for n in names if n not in SCOPES]
+    if not names or unknown:
+        what = f"unknown scope {', '.join(repr(n) for n in unknown)}" if unknown else "no scope named"
+        raise argparse.ArgumentTypeError(f"{what}; the scopes are {', '.join(SCOPES)}\n\n{mcp_warning()}")
+    return tuple(dict.fromkeys(names))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -213,6 +248,29 @@ def build_parser() -> argparse.ArgumentParser:
     _ollama_arg(ev)
     _tracing_args(ev)
 
+    mcp = commands.add_parser(
+        "mcp",
+        help="serve stored postings and the skill profile, read-only, to an MCP client over stdin and stdout",
+        description="Run a read-only Model Context Protocol server over standard input and output for the program "
+        "that starts it (an MCP client). " + mcp_warning() + " The server never changes the database, calls no "
+        "model and listens on no port. Needs the mcp extra.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    mcp.add_argument(
+        "--share",
+        type=_scopes,
+        metavar="SCOPE[,SCOPE]",
+        help="what the client may receive: postings, profile, or postings,profile (required; no environment "
+        "variable)",
+    )
+    mcp.add_argument(
+        "--db",
+        default=os.environ.get("JOBHUNT_DB_URL", DEFAULT_DB_URL),
+        help=f"database URL (default: $JOBHUNT_DB_URL or {DEFAULT_DB_URL}); give an absolute path, since a client "
+        "may start the server in another folder. It must exist and be at the current schema",
+    )
+    _tracing_args(mcp, mcp=True)
+
     profile = commands.add_parser("profile", help="maintain the profile")
     profile_commands = profile.add_subparsers(dest="profile_command", required=True)
     reset = profile_commands.add_parser(
@@ -296,6 +354,8 @@ def main(argv: list[str] | None = None) -> int:
             return _serve(args)
         if args.command == "eval":
             return _eval(args)
+        if args.command == "mcp":
+            return _mcp(args)
         if args.command == "profile":
             return _profile_reset(args)
         if args.command == "inbox":
@@ -500,6 +560,59 @@ def _serve(args: argparse.Namespace) -> int:
                 thread.join(timeout=5)
         if stop_tracing is not None:
             stop_tracing()  # after the worker, so its last spans are sent
+        engine.dispose()
+    return 0
+
+
+def _mcp(args: argparse.Namespace) -> int:
+    """`jobhunt mcp`: stdout carries the protocol only, so everything here goes to stderr. Never migrates or creates
+    a database."""
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from . import migrate
+    from .db import MissingDatabase, read_only_engine
+    from .enrich import tracing
+
+    if not args.share:
+        print(f"error: nothing is shared until you name it with --share.\n\n{mcp_warning()}", file=sys.stderr)
+        return 2
+    try:
+        from . import mcp_server
+    except ImportError:
+        print('error: the MCP server needs the mcp extra (pip install -e ".[mcp]")', file=sys.stderr)
+        return 2
+    try:
+        engine = read_only_engine(args.db)
+    except MissingDatabase as exc:
+        print(f"error: {exc}; the MCP server never creates a database (give --db an absolute path)", file=sys.stderr)
+        return 2
+    stop_tracing = None
+    try:
+        try:
+            found, head = migrate.current_revision(engine), migrate.head_revision()
+        except SQLAlchemyError as exc:
+            print(f"error: cannot read the database: {exc}", file=sys.stderr)
+            return 2
+        if found != head:
+            print(
+                f"error: the database is at schema version {found or 'none'}, not {head}; run `jobhunt import` or "
+                "`jobhunt serve` once to upgrade it (the MCP server never changes the database)",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"jobhunt mcp: sharing {', '.join(args.share)} with the program that started it", file=sys.stderr)
+        print(f"  database:  {make_url(args.db).render_as_string(hide_password=True)} (read-only)", file=sys.stderr)
+        stop_tracing = tracing.setup(args.otlp_endpoint, args.trace_content)
+        if tracing.enabled():
+            print(f"  tracing:   {args.otlp_endpoint}", file=sys.stderr)
+            if args.trace_content:
+                print("  span content: on (tool call arguments and error messages are sent to the trace endpoint)",
+                      file=sys.stderr)
+        mcp_server.serve(engine, args.share)
+    finally:
+        if stop_tracing is not None:
+            stop_tracing()
         engine.dispose()
     return 0
 

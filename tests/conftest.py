@@ -53,6 +53,20 @@ def throwaway_engine(backend: str, sqlite_path: Path):
         admin.dispose()
 
 
+def read_only_twin(engine):
+    """`db.read_only_engine` on the same database as `engine` (on Postgres, with its throwaway schema)."""
+    from sqlalchemy import text
+
+    from jobhunt.db import read_only_engine
+
+    url = engine.url.render_as_string(hide_password=False)
+    if engine.dialect.name == "sqlite":
+        return read_only_engine(url)
+    with engine.connect() as conn:
+        search_path = conn.execute(text("SHOW search_path")).scalar()
+    return read_only_engine(url, connect_args={"options": f"-csearch_path={search_path}"})
+
+
 @pytest.fixture
 def engine(empty_engine):
     """An initialized database (schema at head) on each configured backend."""

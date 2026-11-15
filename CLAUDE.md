@@ -19,8 +19,8 @@ Early stage, built one OpenSpec change at a time: each change's proposal, design
 - **CI:** `.github/workflows/ci.yml`: tests on Python 3.11 and 3.13 (SQLite), tests on Postgres (both with the `otel` extra, so the tracing tests run), ruff, the privacy check (`--patterns-only --history`) and `openspec validate --all --strict`.
 - **OpenSpec schema:** `jobhunt-driven` (`openspec/schemas/jobhunt-driven/`, the default in `openspec/config.yaml`), forked from OpenSpec 1.13.0's `spec-driven` with one more required artifact, `parser-impact` (needed before `tasks`). A fork doesn't receive upstream changes to `spec-driven`'s instructions; compare with `openspec schema which --all` after upgrading OpenSpec. Changes archived before the fork keep `schema: spec-driven`.
 - **Storage:** Postgres is the main database, with SQLite as a fallback. Data-access code must work on both. Don't rely on Postgres-only features (JSONB operators, arrays, `ON CONFLICT` variants, etc.) unless they're behind a portable abstraction or have an SQLite equivalent.
-- **Libraries:** BeautifulSoup 4 + lxml for HTML parsing; SQLAlchemy Core 2.x (no ORM) for portable storage; Alembic for schema migrations; `psycopg` for Postgres (optional extra); `argparse` for the CLI; Flask + Jinja2 with vendored htmx for the web UI (no JavaScript build step); `markdown-it-py` for notes; `pypdf` and `python-docx` for document text extraction. The Ollama client uses the standard library (`urllib`); don't add the `ollama` package. OpenTelemetry (`opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`) is the optional `otel` extra, for tracing only; only `enrich/tracing.py` imports it, and only once tracing is on.
-- **Models:** a local Ollama server only. No data leaves the machine, and model output is a suggestion until the user accepts it.
+- **Libraries:** BeautifulSoup 4 + lxml for HTML parsing; SQLAlchemy Core 2.x (no ORM) for portable storage; Alembic for schema migrations; `psycopg` for Postgres (optional extra); `argparse` for the CLI; Flask + Jinja2 with vendored htmx for the web UI (no JavaScript build step); `markdown-it-py` for notes; `pypdf` and `python-docx` for document text extraction. The Ollama client uses the standard library (`urllib`); don't add the `ollama` package. OpenTelemetry (`opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`) is the optional `otel` extra, for tracing only; only `enrich/tracing.py` imports it, and only once tracing is on. The official `mcp` SDK is the optional `mcp` extra, for `jobhunt mcp` only; only `mcp_server.py` imports it.
+- **Models:** a local Ollama server only. jobhunt itself sends no data to another machine; `jobhunt mcp` gives the scopes named at its start to the program that started it, which may send them on (see \"MCP server\"), and model output is a suggestion until the user accepts it.
 - **Parsers:** installed plug-ins, registered by packages under the `jobhunt.parsers` entry-point group (the built-in `posting-file` parser is registered the same way in `pyproject.toml`). Entry points come from installed metadata, so after changing a `pyproject.toml` entry point run `pip install -e .` again. Parsers recognise files by their contents, not their type.
 - **Interface:** a local web app (`jobhunt serve`); notebooks may come later for analysis. Keep each posting's original URL and show it as a link ("Original posting") wherever postings appear in output.
 
@@ -74,7 +74,7 @@ src/jobhunt/
         __init__.py   CaptureFile, ParsedPosting, Rejected, the Parser protocol, loading `jobhunt.parsers` entry points (installed())
         posting_file.py  the built-in posting-file parser (one JSON posting per file)
     sanitize.py   description HTML -> allowlisted HTML (links: http, https, mailto only), and its plain text (no DB code)
-    db.py         SQLAlchemy Core tables (captured + user-authored + derived + operational), engine setup; init_db runs migrations
+    db.py         SQLAlchemy Core tables (captured + user-authored + derived + operational), engine setup, read_only_engine; init_db runs migrations
     migrate.py    programmatic Alembic: upgrades to head (SQLite foreign keys off while revisions run, checked before commit); refuses databases older than the baseline (TooOld)
     migrations/   Alembic env.py + versions/ (shipped as package data)
     store.py      writes captures/postings/snapshots for a ParsedPosting: identity by source and external ID, sanitizing, canonical details, fingerprint; history is appended, never rewritten
@@ -89,6 +89,11 @@ src/jobhunt/
                   (profile_suggestions), expansion contexts, posting skills, effective links, saved CVs (no Flask)
     documents.py  content-addressed document store + text extraction: PDF, DOCX, ODT (tabs kept), TXT, MD (no Flask)
     recommend.py  match credits and scores, posting ranking, unlinked-skill pooling, skill gains, a posting's Have / Don't have summary (`posting_summary`); computed on each view, no writes (no Flask)
+    mcp_tools.py  the MCP tools as plain functions over queries and recommend: SCOPES, result TypedDicts, limits,
+                  NotFound; fields picked by name (no `mcp`, no Flask, no writer imported)
+    mcp_server.py the MCP server (the only `mcp` importer): build(engine, scopes), typed signatures (strict input
+                  schemas), each call's arguments sifted (_sift), a connection and a `tools/call` span per call,
+                  serve() over stdio
     tailor.py     a CV proposal for a posting (`cv-rank@1`): Choice (the only parser of its URL), highlight cover, records by kind,
                   details, gaps, private-record checks; computed on each view, no writes (no Flask)
     cvdoc/
@@ -96,7 +101,7 @@ src/jobhunt/
         layout.py     section order, headings, date and term wording, course condensing, nesting: build(content) -> Cv
         styles.py     every ODF style of an exported CV (styles.xml) and the style names
         odt.py        write(cv) -> ODT bytes (stdlib zipfile + ElementTree, deterministic)
-    cli.py        `jobhunt import`, `jobhunt inbox prune`, `jobhunt serve`, `jobhunt eval`, `jobhunt profile reset`, `jobhunt privacy-check`, `jobhunt demo`
+    cli.py        `jobhunt import`, `jobhunt inbox prune`, `jobhunt serve`, `jobhunt eval`, `jobhunt mcp`, `jobhunt profile reset`, `jobhunt privacy-check`, `jobhunt demo`
     privacy.py    the release privacy check: personal values from the database (read-only) and the private term file, patterns
                   (posting IDs, emails, phones, home paths), forbidden file kinds; tracked, staged and history scopes
     demo/
@@ -135,6 +140,9 @@ src/jobhunt/
         cvs.py        /postings/<id>/cv (proposal, read-only), saving, /cvs/<id> (saved CV, move/remove/delete), /cvs/<id>.odt
         templates/    Jinja2 pages and htmx fragments
         static/       htmx.min.js (vendored), marks.js, app.css
+scripts/
+    ollama_capture.py  a loopback-only proxy that records each request a client sends Ollama and the reply (MCP diagnosis;
+                       standard library only, not part of the package)
 ```
 
 - `postings` is one row per source and external ID, with an integer key `job_id` (assigned by the database, used in every other table and in `/postings/<int:job_id>` URLs) and first/last seen. A snapshot holds the core fields (title, company, location, workplace and employment type, posted date and precision, description HTML and text) plus `details_json` (compared) and `volatile_json` (not compared), in `store.canonical_details` form (no null, "" or [] values, keys sorted). A new `posting_snapshots` row is added only when the fingerprint (`store.fingerprint`: core fields except the posted date, plus details) changes. `captures` keeps every accepted original file (`raw_gz`) and the accepting parser's `name@version`; snapshots record it too (`1` for snapshots stored before parsers were plug-ins).
@@ -182,6 +190,16 @@ The UI marks captured, user and derived data with `.src-captured`, `.src-user` a
 - **Saving** (`POST /postings/<id>/cvs`) makes the proposal again from the posted ids inside the write and stores it with `userdata.save_tailored_cv`: one `tailored_cv_items` row per top-level item (section, position, `source_kind`, `source_id` with no foreign key, `payload_json`), the match score, the method, and `choice_json` (the choice and the kinds with records left out, for "Selected Publications"). A saved CV is a **frozen copy**: profile edits never change it; its page marks items whose source has since been deleted or become private, and the user can move items within a section, remove them (records printed under them go too) or delete the CV. Posting and application pages list a posting's saved CVs.
 - **Presentation**: `cvdoc/layout.py` (section order, headings, dates, terms, condensing, `part_of` nesting: a record whose context is printed goes under it, else gets "Part of: …") and `cvdoc/styles.py` (fonts, sizes, tab stops, the bullet list) are the only places to change the look; the HTML preview (`cvs/_preview.html`) and the ODT export (`GET /cvs/<id>.odt`, only for saved CVs) render the same `Cv`. Payloads are field values, not formatted text, so restyling applies to saved CVs too; a payload shape change bumps `content_version`, and `content_from_json` keeps reading every version written.
 
+### MCP server
+
+- **`jobhunt mcp --share SCOPE[,SCOPE] --db URL`** (`cli._mcp`, `mcp_server.py`, `mcp_tools.py`, `docs/mcp.md`, the `mcp-server` spec) serves five read-only tools over stdio to the program that starts it. Scopes (`mcp_tools.SCOPES`): `postings` (`search_postings`, `get_posting`) and `profile` (`posting_fit`, `profile_skills`, `recommendations`); a tool outside the named scopes isn't registered. `--share` is required (no default, no environment variable, no "all"); without it, or with an unknown scope, exit 2 before the database is opened, with the warning (`cli.mcp_warning`: results may reach a model outside this machine) and a pointer to the "Keeping everything on this machine" section of `docs/mcp.md` (`cli.MCP_LOCAL_SECTION`; a test checks the heading exists). `--help` carries the same.
+- **The floor:** no result holds profile details, records, ground quotes, highlights, documents, notes, dismissal reasons, mark quotes, application events, contacts, company data, saved CVs, captures, earlier snapshots, volatile details or unverified suggestions; results are built from named fields (a marker test in `tests/test_mcp_tools.py` plants a value in each and checks none is returned). A claim's level is returned whatever grounds it; a later tool returning records must drop private ones first.
+- **Read-only, three layers:** the command never migrates or creates a database (missing SQLite file or a revision other than head: exit 2); `db.read_only_engine` makes the database refuse writes (SQLite `mode=ro`, Postgres `default_transaction_read_only=on`); `mcp_tools.py` imports only `queries` and `recommend`. No model, no Ollama, no port. Everything printed goes to stderr (stdout is the protocol).
+- **Results:** the same figures as the pages (the read models), every posting with `job_id`, `title`, `company`, `url`; a field without a value is left out; `search_postings` pages with `limit` (≤ 50) and `offset`, and names the filters that left postings out (`filters_used`, the default `dismissed: hidden` included) with each one's count when it alone is removed (`total_without`); `recommendations` with a workplace filter gives `considered_without`; a description is cut at 20,000 characters (`description_truncated`). Input schemas are strict, but each call is sifted (`mcp_server._sift`): an unknown argument or a value outside the schema is left out, the tool runs with the rest and the defaults, and the result begins with `warnings` (naming the argument and what the schema accepts, never the value); a call that gave arguments with none usable, or without a usable `job_id`, is refused and doesn't run (no span); the span counts ignored arguments (`jobhunt.mcp.arguments.ignored`). `NotFound` becomes a tool error naming the id only.
+- **Descriptions state facts, not instructions** (the user's principle: the server supports the model that uses it and doesn't tell it what to do, since advice tuned to one small model may not help others): a client need not pass the server's `INSTRUCTIONS` to its model (ollmcp sends only each tool's name, description and input schema), so `mcp_server.DESCRIPTIONS` and the argument descriptions repeat the facts that apply to each tool (saved postings, where a `job_id` comes from and never the URL's number, ratings vs match scores, figures as jobhunt's own, `url` the original address; for `search_postings`, how `q` matches (`_ONE_PHRASE`) and `workplace` one value). Fixed text, no stored data; `tests/test_mcp_server.py` checks each sentence reaches every tool it applies to, and that no description holds an instruction phrase (`INSTRUCTING`). Wording is measured before it's adopted (design D9 of `add-mcp-server`): the `q` sentence names no example values, since models copied both a combined example and a company one.
+- **Tracing:** `--otlp-endpoint` / `--trace-content` as for `serve`; `tracing.tool(name, arguments)` opens one `tools/call <tool>` server span per call, its own trace, whose `set()` takes `TOOL_ATTRIBUTES` only (posting id, items, total, chars, truncated); arguments only with content on; the result never.
+- **Tests:** `tests/test_mcp_tools.py` (no extra needed), `tests/test_mcp_server.py` (in-memory `Client(server)`), `tests/test_mcp_tracing.py` (both extras), `tests/test_cli_mcp.py` (refusals and a stdio round trip); `tests/mcp_schemas.py` checks results against the advertised output schemas, closed to unnamed fields (on the demo too). After an `mcp` upgrade or a tool's schema change, also run the MCP Inspector on the demo (`docs/mcp.md`, "Checking with another client"). To see the exact requests a client sends its model, run `scripts/ollama_capture.py` between it and Ollama (`docs/mcp.md`, "Seeing what the model was sent"; `tests/test_ollama_capture.py`). The recommended client set-up keeps results local: `docs/mcp.md` documents ollmcp with a local Ollama model, checked against the demo.
+
 ### Privacy check and demo
 
 - **Fictional data only** in tests, specs, docs and the demo: the cast in `docs/fictional-data.md` (Jane Doe, `Example …` organisations, `example.com` addresses, posting IDs from `9000000001`, `555-01xx` phones). Real-looking values a test needs are built at runtime.
@@ -221,6 +239,7 @@ python3 -m venv venv                     # once, if venv/ does not exist
 source venv/bin/activate                 # all commands below assume the venv is active
 pip install -e ".[dev,postgres]"         # install the package, pytest and the Postgres driver
 pip install -e ".[otel]"                 # optional: OpenTelemetry tracing (docs/tracing.md); CI installs it for the tests
+pip install -e ".[mcp]"                  # optional: the MCP server (jobhunt mcp, docs/mcp.md)
 
 jobhunt import                           # import everything in ./inbox (moves files afterwards)
 jobhunt import path/to/posting.json      # import specific files in place
@@ -245,6 +264,14 @@ jobhunt eval --posted-within 12m --labelled-within 6m  # also report the posting
 # reuses stored runs for the same snapshot, model and pipeline unless --fresh; exits 1 with no labelled
 # postings, or when Ollama is unreachable and runs are needed (states the new runs per method first and runs none
 # then), or with an unknown --skills method
+
+jobhunt mcp --share postings,profile --db sqlite:////abs/path/jobhunt.db  # MCP server over stdio for the client
+# that starts it; read-only; --share is required (postings, profile); results may reach the client's model, so
+# see docs/mcp.md "Keeping everything on this machine"; --otlp-endpoint/--trace-content as for serve; exit 2
+# without --share, for a missing database file, a database not at head, or without the mcp extra
+python scripts/ollama_capture.py --out FILE [--listen 127.0.0.1:11436] [--upstream http://127.0.0.1:11434]
+# records each request an Ollama client (e.g. ollmcp --host http://127.0.0.1:11436) sends and the reply, as JSON
+# lines; loopback addresses only (exit 2 otherwise); the file holds tool results, so keep it out of the repository
 
 jobhunt profile reset --db URL --yes     # delete every record, claim and highlight (on a copy: back up data/ first);
                                          # keeps details, aliases, rejections, link overrides, postings, documents

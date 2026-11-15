@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Spans for MCP tool calls
-While tracing is on, the MCP server (see `mcp-server`) SHALL emit one span for each tool call that starts a tool, whether the tool answers or fails, and each such span SHALL be its own trace. The span SHALL carry the tool's name, that it is a tool call, the transport (standard input and output), the posting's integer id when the call names one, the number of items in the result, the total number of matches for a search, the size of the result in characters, and whether the result was cut at a size limit. A call that fails SHALL have an error status and the kind of failure. A call refused before a tool starts (an unknown or unshared tool, arguments outside the tool's schema) SHALL emit no span, and neither SHALL any other protocol message (connecting, listing tools). No span other than these SHALL be sent for the server's work. Attributes that the OpenTelemetry semantic conventions for MCP and GenAI name SHALL use those names; the rest SHALL be prefixed `jobhunt.`. Whether tracing is on SHALL NOT change a tool's result.
+While tracing is on, the MCP server (see `mcp-server`) SHALL emit one span for each tool call that starts a tool, whether the tool answers or fails, and each such span SHALL be its own trace. The span SHALL carry the tool's name, that it is a tool call, the transport (standard input and output), the posting's integer id when the call names one, the number of items in the result, the total number of matches for a search, the size of the result in characters, whether the result was cut at a size limit, and how many of the call's arguments were ignored (when any were; never their names or values). A call that fails SHALL have an error status and the kind of failure. A call refused before a tool starts (an unknown or unshared tool, or arguments with nothing usable in them, see `mcp-server` "Tool errors") SHALL emit no span, and neither SHALL any other protocol message (connecting, listing tools). No span other than these SHALL be sent for the server's work. Attributes that the OpenTelemetry semantic conventions for MCP and GenAI name SHALL use those names; the rest SHALL be prefixed `jobhunt.`. Whether tracing is on SHALL NOT change a tool's result.
 
 #### Scenario: A search
 - **WHEN** tracing is on and a client calls `search_postings`, which returns 20 of 45 matching postings
@@ -15,9 +15,13 @@ While tracing is on, the MCP server (see `mcp-server`) SHALL emit one span for e
 - **WHEN** tracing is on and a client calls `get_posting` with an id that doesn't exist
 - **THEN** the span has an error status and names the kind of failure
 
-#### Scenario: A refused argument
-- **WHEN** tracing is on and a client calls `search_postings` with `sort` `salary`
+#### Scenario: A refused call
+- **WHEN** tracing is on and a client calls `search_postings` with `sort` `salary` and no other argument
 - **THEN** no span is emitted
+
+#### Scenario: Ignored arguments
+- **WHEN** tracing is on and a client calls `search_postings` with `q` "Example" and an argument `company`, which the tool doesn't have
+- **THEN** the call's span says one argument was ignored, and holds neither `company` nor its value
 
 #### Scenario: Connecting and listing
 - **WHEN** tracing is on and a client connects and lists the tools without calling one

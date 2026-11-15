@@ -739,6 +739,30 @@ def make_engine(url: str = DEFAULT_DB_URL, **kwargs) -> Engine:
     return create_engine(url, **kwargs)
 
 
+class MissingDatabase(Exception):
+    """A read-only engine was asked for a SQLite file that doesn't exist (nothing is created)."""
+
+
+def read_only_engine(url: str = DEFAULT_DB_URL, **kwargs) -> Engine:
+    """An engine on which the database itself refuses writes; nothing is created or migrated.
+
+    SQLite: the file opened with `mode=ro` from its absolute path (MissingDatabase when it doesn't exist, without
+    creating it or its folder). Postgres: `default_transaction_read_only=on` on every connection, added to any
+    `options` in `connect_args`.
+    """
+    parsed = make_url(url)
+    if parsed.get_backend_name() == "sqlite":
+        if not parsed.database or parsed.database == ":memory:":
+            raise MissingDatabase("a read-only database needs a SQLite file")
+        path = Path(parsed.database).resolve()
+        if not path.is_file():
+            raise MissingDatabase(f"no database file at {path}")
+        return create_engine(f"sqlite:///file:{path}?mode=ro&uri=true", **kwargs)
+    connect_args = dict(kwargs.pop("connect_args", {}))
+    connect_args["options"] = (connect_args.get("options", "") + " -cdefault_transaction_read_only=on").strip()
+    return create_engine(url, connect_args=connect_args, **kwargs)
+
+
 def _sqlite_foreign_keys(dbapi_connection, _record) -> None:
     # Postgres always enforces foreign keys; make SQLite match.
     cursor = dbapi_connection.cursor()
