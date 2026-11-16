@@ -64,7 +64,8 @@ _FIGURES = (
 _CITE = "Each posting's `url` is its original web address."
 # Leads `q`'s description and is in search_postings': models joined title and company into one `q` when how `q`
 # matches came later. No example values: models copied a combined example and invented a `company` argument after a
-# company example (design D9, "Measured wording"); measure any rewording before adopting it.
+# company example (add-mcp-server design D9, "Measured wording"). Any rewording is measured and adopted by the rule in
+# docs/mcp-eval.md (scripts/mcp_eval/, the mcp-evaluation spec).
 _ONE_PHRASE = (
     "`q` is matched as a substring, ignoring case: a posting matches when its title, its company or its description "
     "contains the whole of `q`, exactly as written."

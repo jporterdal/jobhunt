@@ -1,0 +1,67 @@
+{
+ "set": "dev",
+ "about": "The five questions add-mcp-server's wording was tuned on, asked in this order (earlier questions and their history_answer are each question's history). Read and tuned on: transcripts of these may be read. Checks and sources are held by tests/test_mcp_eval.py against the demo.",
+ "questions": [
+  {
+   "id": "dev-1",
+   "text": "Which of my saved postings are remote? List each with its title, company and link.",
+   "history_answer": "Your four saved remote postings:\n\n1. Senior Data Analyst, Example Insurance: https://jobs.example.com/view/9000000103\n2. NLP Scientist, Example Labs: https://jobs.example.com/view/9000000110\n3. MLOps Engineer, Example Systems: https://jobs.example.com/view/9000000106\n4. Data Engineer, Example Payments: https://jobs.example.com/view/9000000104",
+   "checks": [
+    {"kind": "answer_urls", "exact": ["9000000103", "9000000110", "9000000106", "9000000104"]},
+    {"kind": "first_call", "tool": "search_postings", "arguments": {"workplace": "Remote"}}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "status"],
+   "sources": [{"tool": "search_postings", "arguments": {"workplace": "Remote"}}]
+  },
+  {
+   "id": "dev-2",
+   "text": "What does the Machine Learning Engineer posting at Example Labs ask for, and what does it pay? Include its link.",
+   "history_answer": "The Machine Learning Engineer posting at Example Labs (https://jobs.example.com/view/9000000101) asks for three or more years of Python and SQL, hands-on scikit-learn or PyTorch, solid statistical modelling, and Docker and CI/CD; Kubernetes, AWS and a Master's degree in a quantitative field are nice to have. It pays $105,000–$125,000 CAD a year.",
+   "checks": [
+    {"kind": "answer_urls", "includes": ["9000000101"]},
+    {"kind": "answer_amounts", "amounts": [105000, 125000]},
+    {"kind": "first_call", "tool": "search_postings", "without": ["workplace"]}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "get_posting", "arguments": {"job_id": 1}}]
+  },
+  {
+   "id": "dev-3",
+   "text": "How well do I fit the Senior Data Analyst posting at Example Insurance, and which of its skills am I missing? Include its link.",
+   "history_answer": "Your match score for the Senior Data Analyst posting at Example Insurance (https://jobs.example.com/view/9000000103) is 0.64. You have Python, SQL, PostgreSQL, Tableau and data visualisation; A/B testing and mentoring only at familiar, and Power BI only through a related skill (Tableau). The skill you're missing is dbt.",
+   "checks": [
+    {"kind": "called", "tool": "posting_fit", "arguments": {"job_id": 3}},
+    {"kind": "answer_figures", "values": [0.644375]},
+    {"kind": "answer_mentions", "names": ["dbt"]},
+    {"kind": "answer_urls", "includes": ["9000000103"]},
+    {"kind": "first_call", "tool": "search_postings", "without": ["workplace"]}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "posting_fit", "arguments": {"job_id": 3}}]
+  },
+  {
+   "id": "dev-4",
+   "text": "Which skills in my profile are at expert level?",
+   "history_answer": "Four skills in your profile are at expert level: Forecasting, Master's degree, Python and Statistical modelling.",
+   "checks": [
+    {"kind": "answer_mentions", "names": ["Forecasting", "Master's degree", "Python", "Statistical modelling"]},
+    {"kind": "first_call", "tool": "profile_skills"}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "profile_skills", "arguments": {}}]
+  },
+  {
+   "id": "dev-5",
+   "text": "Which of my saved remote postings fit me best, and what do they still ask for? Link each one.",
+   "history_answer": "Your best remote fits:\n\n1. Senior Data Analyst, Example Insurance (score 0.64): https://jobs.example.com/view/9000000103. Still asks for Power BI, A/B testing and mentoring.\n2. NLP Scientist, Example Labs (0.35): https://jobs.example.com/view/9000000110. Still asks for large language models, NLP and a PhD.\n3. MLOps Engineer, Example Systems (0.27): https://jobs.example.com/view/9000000106. Still asks for alerting, CI/CD and Kubernetes.",
+   "checks": [
+    {"kind": "called", "tool": "recommendations", "arguments": {}},
+    {"kind": "answer_figures", "values": [0.644375, 0.3466667, 0.2666667]},
+    {"kind": "answer_urls", "includes": ["9000000103", "9000000110", "9000000106"]},
+    {"kind": "first_call", "tool": "recommendations", "arguments": {"workplace": ["Remote"]}}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "status"],
+   "sources": [{"tool": "recommendations", "arguments": {"workplace": ["Remote"]}}]
+  }
+ ]
+}

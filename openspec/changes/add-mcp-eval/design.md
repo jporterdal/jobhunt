@@ -141,3 +141,85 @@ Nothing in the package changes. `data/mcp-smoke/` stays as it is; its figures ar
 ## Open Questions
 
 - Whether a second model (`qwen3:14b`) should be part of the adoption rule. Left to a later change, once the cost per sample is known; the comparison already takes a model per stage.
+
+## Implementation notes
+
+Found while implementing; the decisions above stand except where a note says otherwise.
+
+- **D3, tool rendering.** ollmcp's provider layer passes each tool through the `ollama` package's `Tool` model
+  (0.6.3). Of the input schema that model keeps only `type`, `$defs`, `items`, `required` and, per property, `type`,
+  `items`, `description` and `enum`, and it drops values that are None. So titles, defaults, `minimum`/`maximum`,
+  `additionalProperties` and a nullable property's `anyOf` never reach the model, and with the `anyOf` go the type
+  and allowed values of `search_postings`' `workplace`, `status` and `min_interest`. `common.ollama_parameters`
+  reproduces this, and with it every request of the six `add-mcp-server` sessions of the current wording
+  (`q-substring`, `q-substring-b`) rebuilds equal under `rollout.py --check`. This bears on later wording changes:
+  only descriptions, and the types and enums of non-nullable properties, are seen.
+- **D3, unknown tools.** ollmcp gives a call to a name it can't map to a server no tool message at all: it prints an
+  error and goes on. So there is no "ollmcp text for an unknown tool". The rollout sends nothing for such a call,
+  and the `unknown_tool` diagnostic counts it.
+- **D3, history.** A question stopped at the loop limit (the session driver aborts it) isn't kept in ollmcp's
+  history. `--check` follows this. Requests are assigned to questions by their last user message's text, not by
+  counting user messages, so a stopped question doesn't shift the ones after it.
+- **D5, which checks a stage scores.** A full stage scores every check except `first_call`. A single-step stage
+  scores only `first_call`. With `first_call` scored in full stages too, the dev-2 check "the first search has no
+  `workplace`" would fail the q-substring runs that the earlier scorer passed 3 of 3 (all three kept `workplace`
+  and still answered right). The carried-filter diagnostic reports it in full stages.
+- **D5, `answer_amounts`.** The listed amounts must all be stated, and no others. This is the earlier scorer's Q2
+  rule, with amounts compared as whole values (`$105k` and `105,000` are both 105000).
+- **D5, sources.** Each question names the tool calls whose results hold its facts (`sources`), so the
+  expected-facts test knows what to compare against.
+- **D4 and D7, cost.** The `add-mcp-server` captures put a question's first request at about 24 s (most of it
+  thinking) and a full question at about 45 s. A single step is therefore about half a full rollout, not seconds,
+  and 30 single-step samples cost more than 10 full ones. To be measured in 6.2, which sets the defaults.
+- **Fidelity (task 6.1).** On 2026-11-15 a fresh ollmcp 0.35.1 session of the dev set (its `ollama` package at
+  0.6.3, Ollama 0.32.1, `qwen3:8b` at an 8192 context, wholly in VRAM) took 4 min 35 s, and `rollout.py --check`
+  found all 13 of its requests equal to the ones a rollout builds, with no change to the rendering.
+- **Resuming a stopped stage** (added for 6.2, so a long run can be paused): `rollout.py STAGE --resume` runs only
+  the (question, sample) pairs `samples.jsonl` lacks, with the stage's own set, questions, samples, model and kind.
+  It's refused when the code hash, the set's questions or history answers (`set_sha256`, new in `stage.json`), the
+  tools as sent or the Ollama version differ, since each would mix two runs in one stage. A Ctrl-C records
+  `stopped: interrupted`, a last line cut off by a kill is dropped and run again, and `score.py` and `compare.py`
+  say when a stage is unfinished. Session batches don't resume. This adds to D2 and D3 and changes no decision.
+- **Baselines (task 6.2).** On 2026-11-16, the current code (code hash `32fc4e357c78`, commit `fced6db` with this
+  change's working tree), `qwen3:8b` at an 8192 context wholly in VRAM, Ollama 0.32.1, all stages in one sitting:
+
+  | Stage | Kind | Samples | Time | A sample |
+  |---|---|---|---|---|
+  | `baseline-dev` | full, dev | 10 × 5 | 38.8 min | 46.5 s |
+  | `baseline-holdout` | full, held-out | 10 × 5 | 28.4 min | 34.1 s |
+  | `baseline-dev-2` | full, dev | 10 × 5 | 38.7 min | 46.4 s |
+  | `first-dev` | single step, dev | 30 × 5 | 59.7 min | 23.9 s |
+
+  Pass counts (held-out as counts only, no held-out transcript read):
+
+  | Question | `baseline-dev` | `baseline-dev-2` | `first-dev` (first call) |
+  |---|---|---|---|
+  | dev-1 | 10/10 | 10/10 | 28/30 |
+  | dev-2 | 2/10 | 2/10 | 6/30 |
+  | dev-3 | 6/10 | 7/10 | 8/30 |
+  | dev-4 | 10/10 | 10/10 | 30/30 |
+  | dev-5 | 7/10 | 6/10 | 18/30 |
+
+  | Question | `baseline-holdout` |
+  |---|---|
+  | holdout-1 | 1/10 |
+  | holdout-2 | 3/10 |
+  | holdout-3 | 0/10 |
+  | holdout-4 | 10/10 |
+  | holdout-5 | 1/10 |
+
+  dev-2 passes 2 of 10 in both dev stages, where the six `add-mcp-server` sessions of this wording passed it 3 of 3
+  and 3 of 3. Its samples show invented arguments (8 and 6 of 10), a carried filter (7 and 6) and a combined `q` (5
+  and 5), and the single step kept `workplace` in 23 of 30 first searches. The sessions' history was the model's own
+  answers, the rollouts' the written `history_answer`s (Risks, "Fixed history"), so the two aren't the same measure.
+  dev-2 and the held-out questions leave room for a change to show `better`. dev-1 and dev-4 pass every sample and
+  can only show `worse`.
+
+  **Costs and defaults.** A full rollout is about 47 s on the dev set and 34 s on the held-out set, so a full stage
+  of each set takes 40 and 30 minutes. A single step is about 24 s, half a full rollout, as the earlier captures
+  suggested. The defaults stay at 10 full rollouts and 30 single steps. 10 against 10 already separates the large
+  effects seen so far. 30 single steps cost an hour for the whole set, so a first-call decision is measured on the
+  questions it concerns (`--questions dev-2`, about 12 minutes). `docs/mcp-eval.md` gives these costs.
+- **Noise check (task 6.3).** `compare.py baseline-dev baseline-dev-2` (the same code twice) gives every dev question
+  `within noise` and the set `within noise`: 10/10 → 10/10, 2/10 → 2/10, 6/10 → 7/10 (p(better) 0.50), 10/10 →
+  10/10, 7/10 → 6/10 (p(worse) 0.50), with the warning that the code hashes are equal.

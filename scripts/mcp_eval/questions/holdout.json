@@ -1,0 +1,66 @@
+{
+ "set": "holdout",
+ "about": "Held out: drafted before any run, never tuned on. Asked in this order, so earlier questions leave filters behind. Reports show these as counts only; reading a transcript of one (detail.py --reveal) moves it to dev.json, and nothing moves back. Checks and sources are held by tests/test_mcp_eval.py against the demo.",
+ "questions": [
+  {
+   "id": "holdout-1",
+   "text": "Which of my shortlisted postings should I look at first? List each with its company and link.",
+   "history_answer": "Two postings are tagged shortlist:\n\n1. Machine Learning Engineer at Example Labs (your interest 5): https://jobs.example.com/view/9000000101\n2. Analytics Lead, Health Data at Example Province (interest 4): https://jobs.example.com/view/9000000105\n\nThe Machine Learning Engineer posting is the one to look at first.",
+   "checks": [
+    {"kind": "answer_urls", "exact": ["9000000101", "9000000105"]},
+    {"kind": "answer_mentions", "names": ["Example Labs", "Example Province"]},
+    {"kind": "first_call", "tool": "search_postings", "arguments": {"tag": "shortlist"}}
+   ],
+   "unasked_filters": ["min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "search_postings", "arguments": {"tag": "shortlist"}}]
+  },
+  {
+   "id": "holdout-2",
+   "text": "What does the Data Scientist, Credit Risk posting at Example Bank ask for? Include its link.",
+   "history_answer": "The Data Scientist, Credit Risk posting at Example Bank (https://jobs.example.com/view/9000000102) asks for a Master's degree in statistics, economics or a related field, strong SQL, experience in forecasting, credit risk models in Python and scikit-learn, time series studies and clear communication; Spark and Tableau or Power BI are nice to have.",
+   "checks": [
+    {"kind": "answer_urls", "includes": ["9000000102"]},
+    {"kind": "answer_mentions", "names": ["Python", "SQL", "forecast", "Master"]},
+    {"kind": "first_call", "tool": "search_postings", "without": ["tag"]}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "get_posting", "arguments": {"job_id": 2}}]
+  },
+  {
+   "id": "holdout-3",
+   "text": "What did the Instructor, Data Analytics posting at Example Polytechnic pay? Include its link.",
+   "history_answer": "The Instructor, Data Analytics posting at Example Polytechnic (https://careers.example.org/view/9000000109), which you dismissed, paid $68,000–$74,000 CAD a year.",
+   "checks": [
+    {"kind": "answer_urls", "includes": ["9000000109"]},
+    {"kind": "answer_amounts", "amounts": [68000, 74000]},
+    {"kind": "first_call", "tool": "search_postings", "without": ["tag"]}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "get_posting", "arguments": {"job_id": 9}}]
+  },
+  {
+   "id": "holdout-4",
+   "text": "Which of my saved postings are at Example Labs? Link each one.",
+   "history_answer": "Two of your saved postings are at Example Labs:\n\n1. Machine Learning Engineer: https://jobs.example.com/view/9000000101\n2. NLP Scientist: https://jobs.example.com/view/9000000110",
+   "checks": [
+    {"kind": "answer_urls", "exact": ["9000000101", "9000000110"]},
+    {"kind": "first_call", "tool": "search_postings", "arguments": {"q": "Example Labs"}, "without": ["tag"]}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "search_postings", "arguments": {"q": "Example Labs"}}]
+  },
+  {
+   "id": "holdout-5",
+   "text": "How well do I fit posting 9000000108? Include its link.",
+   "history_answer": "Your match score for the Research Software Developer posting at Example University (https://careers.example.org/view/9000000108) is 0.51. You have Python, a Master's degree, Git, teaching and some Docker; you don't have Linux, a PhD or REST APIs.",
+   "checks": [
+    {"kind": "called", "tool": "posting_fit", "arguments": {"job_id": 8}},
+    {"kind": "answer_figures", "values": [0.51]},
+    {"kind": "answer_urls", "includes": ["9000000108"]},
+    {"kind": "first_call", "tool": "search_postings", "arguments": {"q": "9000000108"}}
+   ],
+   "unasked_filters": ["tag", "min_interest", "unrated", "workplace", "status"],
+   "sources": [{"tool": "posting_fit", "arguments": {"job_id": 8}}]
+  }
+ ]
+}

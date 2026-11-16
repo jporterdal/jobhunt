@@ -143,6 +143,17 @@ src/jobhunt/
 scripts/
     ollama_capture.py  a loopback-only proxy that records each request a client sends Ollama and the reply (MCP diagnosis;
                        standard library only, not part of the package)
+    mcp_eval/          measuring how a model uses the MCP server, on the demo only (docs/mcp-eval.md; not part of the
+                       package, needs the mcp extra; output under ignored data/mcp-eval/):
+        common.py      demo guard (read-only, `demo.created_at`), loopback check, data layout, question sets, Ollama
+                       calls, ollmcp 0.35.1's rendering of tools (the `ollama` package's Tool model), results, messages
+        rollout.py     rollouts (the client's requests without the client, results from the working tree in-process),
+                       --first-step, the context check, --check (fidelity against a real capture)
+        score.py       per-question records from captures and rollouts, checks, diagnostics, stage report
+        compare.py     per-question one-sided Fisher exact test, question and set verdicts
+        detail.py      one dev question's samples; refuses held-out ones unless --reveal, which moves them to dev
+        session.py     one ollmcp session in a pseudo-terminal; batch.py runs N, each through ollama_capture.py
+        questions/     dev.json, holdout.json: questions, written history answers, checks, unasked filters, sources
 ```
 
 - `postings` is one row per source and external ID, with an integer key `job_id` (assigned by the database, used in every other table and in `/postings/<int:job_id>` URLs) and first/last seen. A snapshot holds the core fields (title, company, location, workplace and employment type, posted date and precision, description HTML and text) plus `details_json` (compared) and `volatile_json` (not compared), in `store.canonical_details` form (no null, "" or [] values, keys sorted). A new `posting_snapshots` row is added only when the fingerprint (`store.fingerprint`: core fields except the posted date, plus details) changes. `captures` keeps every accepted original file (`raw_gz`) and the accepting parser's `name@version`; snapshots record it too (`1` for snapshots stored before parsers were plug-ins).
@@ -197,6 +208,7 @@ The UI marks captured, user and derived data with `.src-captured`, `.src-user` a
 - **Read-only, three layers:** the command never migrates or creates a database (missing SQLite file or a revision other than head: exit 2); `db.read_only_engine` makes the database refuse writes (SQLite `mode=ro`, Postgres `default_transaction_read_only=on`); `mcp_tools.py` imports only `queries` and `recommend`. No model, no Ollama, no port. Everything printed goes to stderr (stdout is the protocol).
 - **Results:** the same figures as the pages (the read models), every posting with `job_id`, `title`, `company`, `url`; a field without a value is left out; `search_postings` pages with `limit` (≤ 50) and `offset`, and names the filters that left postings out (`filters_used`, the default `dismissed: hidden` included) with each one's count when it alone is removed (`total_without`); `recommendations` with a workplace filter gives `considered_without`; a description is cut at 20,000 characters (`description_truncated`). Input schemas are strict, but each call is sifted (`mcp_server._sift`): an unknown argument or a value outside the schema is left out, the tool runs with the rest and the defaults, and the result begins with `warnings` (naming the argument and what the schema accepts, never the value); a call that gave arguments with none usable, or without a usable `job_id`, is refused and doesn't run (no span); the span counts ignored arguments (`jobhunt.mcp.arguments.ignored`). `NotFound` becomes a tool error naming the id only.
 - **Descriptions state facts, not instructions** (the user's principle: the server supports the model that uses it and doesn't tell it what to do, since advice tuned to one small model may not help others): a client need not pass the server's `INSTRUCTIONS` to its model (ollmcp sends only each tool's name, description and input schema), so `mcp_server.DESCRIPTIONS` and the argument descriptions repeat the facts that apply to each tool (saved postings, where a `job_id` comes from and never the URL's number, ratings vs match scores, figures as jobhunt's own, `url` the original address; for `search_postings`, how `q` matches (`_ONE_PHRASE`) and `workplace` one value). Fixed text, no stored data; `tests/test_mcp_server.py` checks each sentence reaches every tool it applies to, and that no description holds an instruction phrase (`INSTRUCTING`). Wording is measured before it's adopted (design D9 of `add-mcp-server`): the `q` sentence names no example values, since models copied both a combined example and a company one.
+- **Measuring wording and results** (`scripts/mcp_eval/`, `docs/mcp-eval.md`, the `mcp-evaluation` spec): a change to the tools' descriptions, argument descriptions, instructions or result fields made to change how models use them is adopted only by that spec's rule: full rollouts against the current code give the dev set `better` with no dev question `worse`, the held-out set isn't `worse` (same model), and a session batch agrees; its design records the figures, and a candidate not adopted is removed. Held-out transcripts aren't read (by you or an agent): `detail.py` refuses them, and `--reveal` moves the question to dev for good. Rollouts reproduce ollmcp 0.35.1's requests, checked against real captures (`rollout.py --check`); note that the `ollama` package drops schema titles, defaults, ranges and a nullable property's `anyOf` (with its type and enum), so only descriptions, types and enums of non-null properties reach the model. Measurements run a model on the user's GPU: ask first.
 - **Tracing:** `--otlp-endpoint` / `--trace-content` as for `serve`; `tracing.tool(name, arguments)` opens one `tools/call <tool>` server span per call, its own trace, whose `set()` takes `TOOL_ATTRIBUTES` only (posting id, items, total, chars, truncated); arguments only with content on; the result never.
 - **Tests:** `tests/test_mcp_tools.py` (no extra needed), `tests/test_mcp_server.py` (in-memory `Client(server)`), `tests/test_mcp_tracing.py` (both extras), `tests/test_cli_mcp.py` (refusals and a stdio round trip); `tests/mcp_schemas.py` checks results against the advertised output schemas, closed to unnamed fields (on the demo too). After an `mcp` upgrade or a tool's schema change, also run the MCP Inspector on the demo (`docs/mcp.md`, "Checking with another client"). To see the exact requests a client sends its model, run `scripts/ollama_capture.py` between it and Ollama (`docs/mcp.md`, "Seeing what the model was sent"; `tests/test_ollama_capture.py`). The recommended client set-up keeps results local: `docs/mcp.md` documents ollmcp with a local Ollama model, checked against the demo.
 
@@ -272,6 +284,17 @@ jobhunt mcp --share postings,profile --db sqlite:////abs/path/jobhunt.db  # MCP 
 python scripts/ollama_capture.py --out FILE [--listen 127.0.0.1:11436] [--upstream http://127.0.0.1:11434]
 # records each request an Ollama client (e.g. ollmcp --host http://127.0.0.1:11436) sends and the reply, as JSON
 # lines; loopback addresses only (exit 2 otherwise); the file holds tool results, so keep it out of the repository
+
+# MCP measurement (docs/mcp-eval.md): demo database only, loopback Ollama only, runs a model (ask before running)
+venv/bin/python scripts/mcp_eval/rollout.py STAGE --set dev [--questions dev-2,dev-3] [--samples 10] [--first-step]
+                                         # [--model qwen3:8b] [--ollama-url URL] [--db URL] [--dry-run]
+venv/bin/python scripts/mcp_eval/rollout.py STAGE --resume  # a stopped stage's missing samples, its own options
+                                         # (refused when code, questions, tools or Ollama version changed)
+venv/bin/python scripts/mcp_eval/rollout.py --check CAPTURE  # a real session's requests against a rollout's
+venv/bin/python scripts/mcp_eval/batch.py STAGE --runs 3 --set dev [--dry-run]  # ollmcp sessions through a proxy
+venv/bin/python scripts/mcp_eval/score.py data/mcp-eval/stages/STAGE [...]
+venv/bin/python scripts/mcp_eval/compare.py data/mcp-eval/stages/CURRENT data/mcp-eval/stages/CANDIDATE
+venv/bin/python scripts/mcp_eval/detail.py data/mcp-eval/stages/STAGE dev-2 [--sample K] [--thinking] [--reveal]
 
 jobhunt profile reset --db URL --yes     # delete every record, claim and highlight (on a copy: back up data/ first);
                                          # keeps details, aliases, rejections, link overrides, postings, documents
