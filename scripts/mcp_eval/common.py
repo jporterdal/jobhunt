@@ -63,6 +63,9 @@ THINK = "medium"  # what ollmcp sends for a thinking model with its default reas
 MIN_CONTEXT = 8192  # question 5 of the dev set overflowed 4096
 OLLMCP_VERSION = "0.35.1"
 
+HISTORIES = ("fixed", "own", "none")  # the history a stage's questions are asked after (docs/mcp-eval.md, "Terms")
+ORDERS = ("set", "balanced")  # the set's order, or the rows of a Williams design (`williams`)
+
 CHECK_KINDS = ("answer_urls", "answer_figures", "answer_mentions", "answer_amounts", "called", "first_call")
 FILTERS = ("tag", "min_interest", "unrated", "workplace", "status", "dismissed")
 
@@ -257,15 +260,50 @@ def dump_set(data: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def history(questions: list[dict], index: int) -> list[dict]:
-    """The messages before question `index`: each earlier question and its recorded final answer, as ollmcp keeps
-    them."""
+def earlier(questions: list[dict], index: int, order: list[str] | None = None) -> list[dict]:
+    """The questions asked before questions[index]: those before it in the set, or in `order` (question ids, a row
+    of `williams`) when given."""
+    if order is None:
+        return questions[:index]
+    by_id = {question["id"]: question for question in questions}
+    return [by_id[qid] for qid in order[:order.index(questions[index]["id"])]]
+
+
+def history_messages(pairs) -> list[dict]:
+    """(question text, final answer) pairs as ollmcp keeps them: each question as a `user` message and its answer as
+    an `assistant` one, left out when empty."""
     messages = []
-    for question in questions[:index]:
-        messages.append({"role": "user", "content": question["text"]})
-        if question["history_answer"]:
-            messages.append({"role": "assistant", "content": question["history_answer"]})
+    for text, answer in pairs:
+        messages.append({"role": "user", "content": text})
+        if answer:
+            messages.append({"role": "assistant", "content": answer})
     return messages
+
+
+def history(questions: list[dict], index: int, order: list[str] | None = None) -> list[dict]:
+    """The messages before question `index` under the `fixed` condition: each earlier question (in the set's order,
+    or in `order`) and its recorded final answer, as ollmcp keeps them."""
+    return history_messages((question["text"], question["history_answer"])
+                            for question in earlier(questions, index, order))
+
+
+def williams(ids: list[str]) -> list[list[str]]:
+    """The orders of a balanced stage (a Williams design): the first row `0, 1, n-1, 2, n-2, ...`, each next row adding
+    1 to every position (mod n), and, when n is odd, every row reversed as well. Across the rows each question is in
+    each position equally often and directly follows each other question equally often: n rows for even n, 2n for
+    odd n (twice each)."""
+    n = len(ids)
+    first, low, high = [0], 1, n - 1
+    while len(first) < n:
+        first.append(low)
+        low += 1
+        if len(first) < n:
+            first.append(high)
+            high -= 1
+    rows = [[(x + shift) % n for x in first] for shift in range(n)]
+    if n % 2:
+        rows += [row[::-1] for row in rows]
+    return [[ids[x] for x in row] for row in rows]
 
 
 # --- the client's rendering ---
@@ -457,10 +495,28 @@ def read_stage(folder: Path) -> dict | None:
 
 
 def stage_info(kind: str, set_name: str, model: str, questions: list[str], samples: int, ollama: Ollama | None,
-               tools: list[dict] | None = None, **extra) -> dict:
+               tools: list[dict] | None = None, history: str = "fixed", order: str = "set",
+               orders: list[list[str]] | None = None, **extra) -> dict:
     return {
         "kind": kind, "set": set_name, "model": model, "questions": questions, "samples": samples,
+        "history": history, "order": order, **({"orders": orders} if orders is not None else {}),
         "ollama_version": ollama.version() if ollama else None,
         "git_commit": git_commit(), "code_sha256": code_hash(),
         "client": f"ollmcp {OLLMCP_VERSION}", **extra, **({"tools": tools} if tools is not None else {}),
     }
+
+
+def conditions(info: dict) -> dict:
+    """A stage's history condition, order and (balanced) orders. A stage recorded before conditions existed reads as
+    history `fixed` in the set's order, and a session stage as `own`, which is what they were."""
+    history = info.get("history") or ("own" if info.get("kind") == "session" else "fixed")
+    return {"history": history, "order": info.get("order") or "set", "orders": info.get("orders")}
+
+
+def condition_label(info: dict) -> str:
+    """`history fixed, order set`, or with a balanced order the number of its orders."""
+    found = conditions(info)
+    order = found["order"]
+    if order == "balanced" and found["orders"]:
+        order = f"balanced ({len(found['orders'])} orders)"
+    return f"history {found['history']}, order {order}"

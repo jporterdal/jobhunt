@@ -3,6 +3,9 @@ start of each result, and the start of the answer; with --thinking, the model's 
 
     venv/bin/python scripts/mcp_eval/detail.py data/mcp-eval/stages/STAGE dev-2 [--sample 3] [--thinking]
 
+Each sample is headed by its stage's history condition and order; for a balanced order or an `own` chain (where a
+question's history differs from sample to sample) also by the questions asked before it in that sample's history.
+
 Held-out questions stay unread: this refuses one and shows nothing of it, unless given --reveal, which shows it and
 moves the question from questions/holdout.json to questions/dev.json (keeping its id, so git shows the move), since a
 question whose transcript was read can be tuned on. Nothing moves from dev to held-out.
@@ -42,21 +45,48 @@ def move_to_dev(question_id: str, folder: Path) -> None:
     holdout_path.write_text(common.dump_set(holdout), encoding="utf-8")
 
 
-def samples(folder: Path, question: dict) -> list[tuple[str, list[tuple[dict, dict]]]]:
-    """(label, the question's exchanges) for each sample of the stage."""
+def samples(folder: Path, question: dict) -> list[tuple[str, list[tuple[dict, dict]], dict]]:
+    """(label, the question's exchanges, the sample's record without them) for each sample of the stage."""
     info = common.read_stage(folder) or {"kind": "session"}
     out = []
     if info["kind"] == "session":
         for capture in sorted(folder.glob("run*/capture.jsonl"), key=lambda p: int(p.parent.name[3:])):
-            out.append((capture.parent.name, score.session_exchanges(capture)))
+            out.append((capture.parent.name, score.session_exchanges(capture), {}))
     else:
         path = folder / "samples.jsonl"
         for line in path.read_text(encoding="utf-8").splitlines() if path.exists() else []:
             sample = json.loads(line)
             if sample["question"] == question["id"]:
                 exchanges = [(e["request"], e["reply"]) for e in sample["exchanges"]]
-                out.append((f"sample{sample['sample']}", exchanges))
+                meta = {k: v for k, v in sample.items() if k not in ("exchanges", "results")}
+                out.append((f"sample{sample['sample']}", exchanges, meta))
     return out
+
+
+def asked_before(exchanges: list[tuple[dict, dict]], question: dict, by_text: dict[str, str]) -> list[str]:
+    """The ids of the questions in this sample's history: the user messages before the question in its first
+    request (a question stopped at the loop limit isn't there, as the client leaves it out)."""
+    for request, _ in exchanges:
+        users = [m.get("content") for m in request.get("messages") or [] if m.get("role") == "user"]
+        if users and users[-1] == question["text"]:
+            return [by_text.get(text, "?") for text in users[:-1]]
+    return []
+
+
+def condition_line(info: dict, meta: dict, before: list[str] | None) -> str:
+    """The sample's condition, and with `before` the questions in its history."""
+    found = common.conditions(info)
+    line = f"   {common.condition_label(info)}"
+    where = []
+    if meta.get("row") is not None:
+        where.append(f"order {meta['row']}")
+    if meta.get("chain") is not None:
+        where.append(f"chain {meta['chain']}, position {meta.get('position')}")
+    if where:
+        line += f" ({'; '.join(where)})"
+    if before is not None and (found["order"] == "balanced" or found["history"] == "own"):
+        line += f"; asked after: {', '.join(before) or 'nothing'}"
+    return line
 
 
 def show(label: str, exchanges: list[tuple[dict, dict]], question: dict, thinking: bool, tools) -> list[str]:
@@ -96,16 +126,20 @@ def main(argv: list[str] | None = None) -> int:
         move_to_dev(args.question, args.questions_dir)
         print(f"moved {args.question} from holdout.json to dev.json: it is a dev question from now on, and held-out "
               "stages run before the move no longer compare with later ones", file=sys.stderr)
-    info = common.read_stage(args.stage) or {}
+    info = common.read_stage(args.stage) or {"kind": "session"}
     found = samples(args.stage, question)
     if args.sample is not None:
-        found = [(label, ex) for label, ex in found if label.removeprefix("run").removeprefix("sample")
-                 == str(args.sample)]
+        found = [(label, ex, meta) for label, ex, meta in found
+                 if label.removeprefix("run").removeprefix("sample") == str(args.sample)]
     if not found:
         print(f"no samples of {args.question} in {args.stage}", file=sys.stderr)
         return 1
-    for label, exchanges in found:
-        print("\n".join(show(f"{args.stage.name}/{label}", exchanges, question, args.thinking, info.get("tools"))))
+    by_text = {q["text"]: q["id"] for name in common.SETS
+               for q in common.load_set(name, args.questions_dir / f"{name}.json")["questions"]}
+    for label, exchanges, meta in found:
+        lines = show(f"{args.stage.name}/{label}", exchanges, question, args.thinking, info.get("tools"))
+        lines.insert(1, condition_line(info, meta, asked_before(exchanges, question, by_text)))
+        print("\n".join(lines))
     return 0
 
 

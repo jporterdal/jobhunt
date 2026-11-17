@@ -16,6 +16,57 @@ every wording was tuned on one question (the design's D9, `openspec/changes/arch
 Here, each question is sampled many times on its own (a *rollout*), a held-out set is kept that the wording is never
 tuned on, and two code versions are compared by an exact test.
 
+## Terms
+
+- **Question set:** `dev` or `held-out`, five questions in a fixed order, each with the checks its answer must pass
+  ("Question sets" below).
+- **History:** the messages a question is asked after. A stage asks its questions under one **history condition**:
+  - `fixed` (the default): the earlier questions of the set, each with its hand-written `history_answer`;
+  - `own`: the earlier questions of the same chain, each with the answer the model itself gave (a question stopped at
+    the loop limit left out, as ollmcp leaves it out);
+  - `none`: no earlier message; the question alone.
+- **Rollout:** one simulated attempt at one question. It sends Ollama the requests ollmcp would send, without ollmcp,
+  and answers each tool call with the working tree's server in-process, until the model answers or the loop limit.
+  A **single-step rollout** sends only the question's first request and records the tool calls it asks for.
+- **Chain:** rollouts of a whole set in order, each answer becoming history for the later questions (`own`). Chain
+  *k* gives sample *k* of every question.
+- **Session:** the real client (ollmcp) driven in a terminal through a capture proxy, asking the whole set in order.
+  Its history is its own answers, so a session stage is `own`.
+- **Sample:** one attempt at one question, scored pass or fail: a rollout, or one question's part of a chain or a
+  session. "dev-2 passed 2/10" means 2 of dev-2's 10 samples passed every scored check.
+- **Stage:** a batch of samples of one code version, set, model, kind (full, single-step or session) and history
+  condition and order, in its own folder `data/mcp-eval/stages/<name>/`. Stages are what `score.py` reports and
+  `compare.py` compares.
+- **Order:** the order a stage asks the set's questions in, which decides a question's history under `fixed` and
+  `own`: the set's order (the default) or `balanced` (below).
+
+## History conditions and orders
+
+Each condition answers a different question:
+
+- **`fixed`** tells how a question does after the same, right history every time. Every sample has the same history,
+  so samples are independent draws and two code versions compare cleanly. It is the default and the main condition
+  for adoption.
+- **`none`** tells how a question does on its own wording. A difference between `fixed` and `none` on the same code is
+  the history's effect (for example, a `workplace` filter left by dev-1 carried into dev-2's search). Every question
+  in a set must read on its own, so that it can be asked without history; a question that refers to an earlier one
+  ("which of those pay the most?") isn't added.
+- **`own`** tells what the model's own earlier answers (right or wrong) do to later questions, at rollout speed:
+  closer to a session, but many more samples than a session batch. It's a diagnostic: it doesn't count toward
+  adoption. `--questions` and `--first-step` are refused with it (a chain asks the whole set, and a first request
+  needs the chain's earlier answers).
+
+**The set's order is the default.** It keeps the carry-overs the sets were written for (holdout-1's `tag` before
+holdout-2) in every sample. **`--order balanced`** is for one-off evaluations, such as "does dev-2 fail wherever it
+sits, or only after dev-1?". It uses a Williams design: for *n* questions, the orders are built from `0, 1, n−1, 2,
+n−2, …`, each next order adding 1 to every position, with every order reversed as well when *n* is odd. For five
+questions that's ten orders, in which each question is asked twice in each position and twice directly after each
+other question. Sample *k* uses order ((*k* − 1) mod 10) + 1, so the default 10 samples are exactly the ten orders
+and cost nothing extra. A sample count that isn't a multiple of the orders is stated before the stage runs (the
+stage isn't balanced), and `score.py` flags an unfinished balanced stage. `stage.json` holds the orders and each
+sample its order (`row`). `balanced` is refused with `none`, where the order changes nothing. A balanced stage
+spreads each question over ten histories, so its counts vary more: it attributes, it doesn't decide adoption.
+
 ## Setting up
 
 1. **Ollama, local, with an 8192-token context.** As in [docs/mcp.md](mcp.md#1-keep-ollama-local):
@@ -43,6 +94,10 @@ venv/bin/python scripts/mcp_eval/rollout.py baseline-dev --set dev --dry-run    
 venv/bin/python scripts/mcp_eval/rollout.py try-q --set dev --questions dev-2,dev-3 --samples 10
 # Single-step rollouts: only each question's first request (30 samples by default), for first-call decisions
 venv/bin/python scripts/mcp_eval/rollout.py first-dev --set dev --first-step
+# History conditions (default fixed) and orders (default set)
+venv/bin/python scripts/mcp_eval/rollout.py none-dev --set dev --history none
+venv/bin/python scripts/mcp_eval/rollout.py own-dev --set dev --history own
+venv/bin/python scripts/mcp_eval/rollout.py balanced-dev --set dev --order balanced --questions dev-2
 # Continue a stopped rollout stage (Ctrl-C, a failed request, a reboot) with its own options
 venv/bin/python scripts/mcp_eval/rollout.py baseline-dev --resume
 
@@ -50,6 +105,8 @@ venv/bin/python scripts/mcp_eval/rollout.py baseline-dev --resume
 venv/bin/python scripts/mcp_eval/score.py data/mcp-eval/stages/baseline-dev
 # Compare the current code's stage with a candidate's
 venv/bin/python scripts/mcp_eval/compare.py data/mcp-eval/stages/baseline-dev data/mcp-eval/stages/candidate-dev
+# Compare two conditions of the same code: each question's history (or order) effect
+venv/bin/python scripts/mcp_eval/compare.py --conditions data/mcp-eval/stages/baseline-dev data/mcp-eval/stages/none-dev
 # One dev question's calls, results and answer, per sample (with --thinking, the model's thinking too)
 venv/bin/python scripts/mcp_eval/detail.py data/mcp-eval/stages/baseline-dev dev-2 --sample 3
 
@@ -61,14 +118,18 @@ venv/bin/python scripts/mcp_eval/rollout.py --check data/mcp-eval/stages/confirm
 
 Common options: `--model` (default `qwen3:8b`), `--ollama-url` (default `http://127.0.0.1:11434`), `--db` (the demo).
 Each stage is a new folder `data/mcp-eval/stages/<name>/`, and a name already used is refused. Its `stage.json`
-holds what ran: kind, set, questions, model, samples, Ollama version, git commit, a hash of `mcp_server.py` and
+holds what ran: kind, set, questions, model, samples, history condition, order (and a balanced stage's orders),
+Ollama version, git commit, a hash of `mcp_server.py` and
 `mcp_tools.py`, the tools as sent, and the demo's company names. `code/` holds copies of those two files. A rollout
 stage writes `samples.jsonl` (every request, reply and tool result; requests leave out the tools, which are in
 `stage.json`), and a session stage writes `run<k>/` (the proxy's `capture.jsonl`, the terminal record
 `session.raw`, the connections `session.conns.json`, `driver.out`).
 
 A rollout stage writes each sample as it finishes, so stopping one keeps what it recorded. `--resume` runs only
-the samples it lacks, with the stage's own set, questions, samples, model and kind (giving any of those is refused).
+the samples it lacks, with the stage's own set, questions, samples, model, kind, history condition and order
+(giving any of those is refused). An `own` stage stopped part-way through a chain continues that chain at its first
+unrecorded question, with the chain's recorded answers as history. Stages from before conditions existed have none in
+`stage.json` and read as `fixed` in the set's order (sessions as `own`).
 It's refused when `mcp_server.py` or `mcp_tools.py` changed, when the set's questions or history answers changed,
 when the tools as sent differ, or when Ollama's version differs, since any of these would mix two runs in one stage.
 `score.py` and `compare.py` say when a stage is unfinished. Session batches don't resume.
@@ -89,9 +150,11 @@ checked against captures:
   `workplace`, `status` and `min_interest` arrive with their descriptions only, and no type or allowed values.
 - **Request:** `{model, stream, options: {}, think: "medium", messages, tools}`. Rollouts send `stream: false`,
   which doesn't change sampling.
-- **History:** each earlier question of the set as a `user` message with its written `history_answer` as an
-  `assistant` message, then the question. (ollmcp keeps each earlier question with its final answer, and leaves out
-  a question stopped at the loop limit.)
+- **History:** as ollmcp keeps it, each earlier question as a `user` message and its final answer as an `assistant`
+  message (left out when empty), then the question; a question stopped at the loop limit is left out. Which earlier
+  questions and answers depends on the stage's condition: under `fixed` the questions before it in the stage's order
+  with their written `history_answer`s, under `own` the chain's questions with the model's answers, under `none`
+  nothing.
 - **Within a question:** each reply as `{"role": "assistant", "content": ..., "tool_calls": [{"function": {"name",
   "arguments"}}]}`, with the content left out when it's empty. Then one `{"role": "tool", "content": ...,
   "tool_name": ...}` per call. Its content is the result's text blocks joined by a blank line, the same for an error
@@ -113,8 +176,9 @@ whenever the documented ollmcp version changes, and record the result here:
 
 ## Question sets
 
-`scripts/mcp_eval/questions/dev.json` and `holdout.json` hold five questions each, asked in order: each question's
-history is the questions before it in its set. Each question has:
+`scripts/mcp_eval/questions/dev.json` and `holdout.json` hold five questions each, in order: under `fixed` in the
+set's order, each question's history is the questions before it in its set. Each question reads on its own, so it
+can also be asked under `none`. Each question has:
 
 - `id`, `text`, and `history_answer` (a short right answer written by hand, used as history for later questions, so
   every stage has the same history and none comes from a transcript);
@@ -126,7 +190,8 @@ history is the questions before it in its set. Each question has:
   - `called`: a tool call the sample must make, with at least these arguments;
   - `first_call`: the question's first call, with its tool, its `arguments` (values), arguments it must have (`with`)
     and arguments it must not have (`without`);
-- `unasked_filters`: search filters the question doesn't ask for, for the carried-filter diagnostic;
+- `unasked_filters`: search filters the question doesn't ask for, for the `carried_filter` (or, without history,
+  `unasked_filter`) diagnostic;
 - `sources`: the tool calls whose results hold the expected facts. `tests/test_mcp_eval.py` builds the demo and
   checks every expected URL, figure, mention, amount and call against them, so a demo change that moves a fact fails
   the suite, naming the question and the fact.
@@ -142,14 +207,15 @@ which is all they ever print. `detail.py` refuses a held-out question and shows 
 shows the question and moves it from `holdout.json` to the end of `dev.json` with its id kept, so git shows the move,
 and says so. A question whose transcript was read can be tuned on, so the move is permanent, and nothing moves from
 dev to held-out. Moving a question changes the held-out set's history, so held-out stages from before a move don't
-compare with later ones. The records under `data/mcp-eval/` hold everything and can be opened by hand. Don't open
+compare with later ones. In an `own` chain of the held-out set, the model's held-out answers are history for later
+held-out questions; `detail.py` refuses those questions just the same. The records under `data/mcp-eval/` hold everything and can be opened by hand. Don't open
 held-out ones, and don't let an agent read them: the rule is procedural, like the skill eval's holdout set.
 
 ## The report
 
-`score.py` reports each question's samples that passed, each scored check's passes, and how many samples showed
-each diagnostic. It also reports the number of samples in which every question passed (session runs, or rollouts
-paired by sample number). A sample passes a question when every check scored passes. **A full stage** (sessions,
+`score.py` names the stage's history condition and order, and reports each question's samples that passed, each
+scored check's passes, and how many samples showed each diagnostic. It also reports the number of samples in which
+every question passed (session runs, rollouts paired by sample number, or `own` rollouts paired by chain). A sample passes a question when every check scored passes. **A full stage** (sessions,
 rollouts) scores every check except `first_call`, and **a single-step stage** scores only `first_call`, since it has
 no answer. The report says which. A single-step stage is evidence for a first-call decision, not for a question's
 answer.
@@ -162,13 +228,15 @@ Diagnostics, counted in every sample:
 | `combined_q` | a search `q` holds a demo company's name and other words |
 | `invented_args` | a call has an argument the tool's schema doesn't have |
 | `unknown_tool` | a call names a tool the client doesn't offer |
-| `carried_filter` | a search uses one of the question's `unasked_filters` |
+| `carried_filter` | a search uses one of the question's `unasked_filters`, in a stage with history |
+| `unasked_filter` | the same, in a stage without history (`none`), where nothing earlier could have carried it |
 | `made_up_amount` | the answer states a money amount that none of the sample's tool results holds |
 | `refused` | a result is an error (a refused call, or a posting not found) |
 | `warnings` | a result begins with `warnings` (arguments left out) |
 | `unanswered` | the question stopped at the loop limit (full stages only) |
 
-The report also gives the mean number of tool calls a sample and the largest prompt in tokens.
+The report also gives the mean number of tool calls a sample and the largest prompt in tokens. `detail.py` heads
+each sample with its condition, and for a balanced order or an `own` chain with the questions asked before it.
 
 ## The verdict, and adopting a change
 
@@ -176,7 +244,7 @@ The report also gives the mean number of tool calls a sample and the largest pro
 one-sided exact test (Fisher's) of the two counts at p ≤ 0.05: `better` when the candidate passes more often,
 `worse` when it passes less often, `within noise` otherwise. Both p-values are shown. The set is `better` when some
 question is `better` and none is `worse`, `worse` when any question is `worse`, and `within noise` otherwise. Stages
-of different sets, kinds or models are refused. Equal code hashes, different Ollama versions and different sample
+of different sets, kinds, models, history conditions or orders are refused, and the report names the condition. Equal code hashes, different Ollama versions and different sample
 counts are warned about. With `--questions`, only the questions in both stages are compared, and the report names
 the rest.
 
@@ -185,15 +253,29 @@ noise`). Large effects are found, and differences of one or two samples aren't c
 testing five questions at once, so the rule asks for more than one `better`:
 
 **A change to the server's tool descriptions, argument descriptions, instructions or result fields, made to change
-how models use the tools, is adopted only when all of the following hold, with the same model:**
+how models use the tools, is adopted only when all of the following hold, with the same model, comparing full
+rollouts of the candidate with the current code's in the set's order under both `fixed` and `none`:**
 
-1. full rollouts against the current code give the dev set `better`, with no dev question `worse`;
-2. the held-out set isn't `worse`;
-3. a session batch with the change (`batch.py`) shows no question that the rollouts passed failing in every
+1. the dev set is `better` under at least one of the two conditions;
+2. no dev question is `worse` under either;
+3. the held-out set isn't `worse` under either;
+4. a session batch with the change (`batch.py`) shows no question that the rollouts passed failing in every
    session.
 
-The change's design records the comparison's figures (held-out as counts). A candidate that isn't adopted is removed
-from the code.
+One condition `better` is enough because a fix for something the history causes (a carried `workplace` filter) can't
+show without history, and a fix to how a question alone is read may be hidden by history. No `worse` under either
+keeps a gain in one condition from being paid for in the other. `own` and balanced stages don't count toward
+adoption. The change's design records the comparisons' figures (held-out as counts). A candidate that isn't adopted
+is removed from the code.
+
+### Comparing conditions
+
+`compare.py --conditions A B` compares two stages of the same code (equal code hashes), set, model and kind whose
+history condition or order differ: for example the current code's `fixed` stage with its `none` stage. It uses the
+same test per question and names the verdict for what it measures: `more` when B passes more often, `fewer` when
+less often, `within noise` otherwise, with both p-values. It gives no set verdict: it attributes an effect to the
+history (or order), and decides nothing. Stages of different code, sets, models or kinds, or of the same condition,
+are refused.
 
 ## Costs
 
@@ -211,5 +293,6 @@ Measured on 2026-11-16 (`qwen3:8b` wholly in VRAM on a 16 GB GPU, an 8192 contex
 A single step is about half a full rollout, most of it the model's thinking. So a single-step stage of the whole set
 costs more than a full one. Measure a first-call decision on the questions it concerns, for example
 `--first-step --questions dev-2` (30 samples, about 12 minutes). Comparing a candidate with the current code by the
-adoption rule needs a full dev stage and a full held-out stage of the candidate, about 70 minutes, plus a session
-batch. Two full dev stages of the same code compared as `within noise` on every question.
+adoption rule needs a full dev stage and a full held-out stage of the candidate under each of `fixed` and `none`,
+about 70 minutes each condition (about 140 minutes), plus a session batch. The current code's stages are reused while
+its code hash is unchanged. Two full dev stages of the same code compared as `within noise` on every question.

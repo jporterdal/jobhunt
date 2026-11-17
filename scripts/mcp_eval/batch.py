@@ -9,6 +9,7 @@ docs/mcp.md starts it (`ollmcp --provider ollama --host http://LISTEN --model MO
 0.35.1 from data/mcp-eval/ollmcp-venv), which types the questions, answers `y` to each tool confirmation and aborts a
 question at the loop limit. Output: data/mcp-eval/stages/STAGE/stage.json and run<k>/ (capture.jsonl,
 session.raw, session.conns.json, driver.out, questions.txt, jobhunt-demo.json), scored by score.py like rollouts.
+A session's history is its own earlier answers in the set's order, so its stage is recorded as history `own`.
 
 Demo database only, loopback addresses only; it states the sessions first, and --dry-run stops there. The sessions
 use the working tree's jobhunt (editable install), so don't edit src/ while a batch runs.
@@ -152,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
 
     folder = common.new_stage(args.stage, args.stages_dir)
     info = common.stage_info("session", args.set, args.model, [q["id"] for q in questions], args.runs, ollama,
-                             companies=companies, ollama_url=args.ollama_url,
+                             history="own", companies=companies, ollama_url=args.ollama_url,
                              started=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     common.write_stage(folder, info)
 

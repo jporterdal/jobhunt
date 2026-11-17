@@ -9,9 +9,14 @@ as a session stage of the set given by `--set` (dev by default).
 
 Which checks a stage scores: a full stage (sessions, rollouts) every check but `first_call`; a single-step stage
 (`rollout.py --first-step`) only the `first_call` checks, since it has no answer. A sample passes a question when
-every check scored passes; a question without a scored check isn't reported. Held-out questions are reported as
-counts only, like every other question here: this command never prints calls, results or answers (`detail.py` does,
-for dev questions).
+every check scored passes; a question without a scored check isn't reported.
+
+The report names the stage's history condition and order (a stage.json without them reads as `fixed` in the set's
+order, sessions as `own`). A stage without history (`none`) reports a search filter its question doesn't ask for as
+`unasked_filter`, since nothing earlier could have carried it; with history it is `carried_filter`.
+
+Held-out questions are reported as counts only, like every other question here: this command never prints calls,
+results or answers (`detail.py` does, for dev questions).
 """
 
 from __future__ import annotations
@@ -300,6 +305,7 @@ def load_stage(folder: Path, set_name: str | None = None, db: str | None = None)
     else:
         path = folder / "samples.jsonl"
         text = path.read_text(encoding="utf-8") if path.exists() else ""
+        numbered = []
         if text and not text.endswith("\n"):  # a sample being written, or cut off by a kill
             text = text[:text.rfind("\n") + 1]
         for line in text.splitlines():
@@ -308,7 +314,9 @@ def load_stage(folder: Path, set_name: str | None = None, db: str | None = None)
                 continue
             exchanges = [(exchange["request"], exchange["reply"]) for exchange in sample["exchanges"]]
             got = records(exchanges, questions, tools=info.get("tools"))
-            samples[sample["question"]].append(got.get(sample["question"]))
+            numbered.append((sample["sample"], sample["question"], got.get(sample["question"])))
+        for _, qid, record in sorted(numbered, key=lambda item: item[0]):  # paired by sample (chain) number
+            samples[qid].append(record)
     companies = info.get("companies")
     if companies is None:
         url = db or common.default_db_url()
@@ -319,11 +327,19 @@ def load_stage(folder: Path, set_name: str | None = None, db: str | None = None)
     return {"folder": folder, "info": info, "questions": questions, "samples": samples, "companies": companies}
 
 
+def shown_name(diagnostic: str, history: str) -> str:
+    """A diagnostic's name in a stage of this history: a filter the question doesn't ask for is `unasked_filter`
+    without history, since nothing earlier could have carried it."""
+    return "unasked_filter" if diagnostic == "carried_filter" and history == "none" else diagnostic
+
+
 def score_stage(stage: dict) -> dict:
     """Per question: samples, passes, each check's passes and each diagnostic's sample count; and the set's."""
     kind = stage["info"]["kind"]
+    found = common.conditions(stage["info"])
     out = {"stage": stage["folder"].name, "kind": kind, "set": stage["info"]["set"],
-           "model": stage["info"].get("model"), "questions": {}}
+           "model": stage["info"].get("model"), "history": found["history"], "order": found["order"],
+           "questions": {}}
     per_sample: dict[int, list[bool]] = {}
     for question in stage["questions"]:
         checks = scored_checks(question, kind)
@@ -338,7 +354,8 @@ def score_stage(stage: dict) -> dict:
             "passed": sum(sample["passed"] for sample in scored),
             "checks": {check_label(check): sum(sample["checks"][i] for sample in scored)
                        for i, check in enumerate(checks)},
-            "diagnostics": {name: sum(1 for sample in scored if sample["diagnostics"][name])
+            "diagnostics": {shown_name(name, found["history"]): sum(1 for sample in scored
+                                                                    if sample["diagnostics"][name])
                             for name in DIAGNOSTICS
                             if kind != "first-step" or name not in ANSWER_DIAGNOSTICS},
             "tool_calls": round(sum(sample["tool_calls"] for sample in scored) / len(scored), 1) if scored else 0,
@@ -354,13 +371,21 @@ def score_stage(stage: dict) -> dict:
 def report(scored: dict, info: dict) -> str:
     kind = scored["kind"]
     scope = "first_call checks only" if kind == "first-step" else "answer and call checks (not first_call)"
-    lines = [f"== {scored['stage']}: {kind}, {scored['set']} set, model {scored['model'] or 'unknown'}; "
-             f"checks scored: {scope}"]
+    lines = [f"== {scored['stage']}: {kind}, {scored['set']} set, model {scored['model'] or 'unknown'}, "
+             f"{common.condition_label(info)}; checks scored: {scope}"]
     if info.get("legacy"):
         lines.append("   (session runs without stage.json)")
     if kind in ("rollout", "first-step") and not info.get("finished"):
         lines.append(f"   unfinished ({info.get('stopped') or 'running, or stopped without a record'}); continue "
                      f"it with rollout.py {scored['stage']} --resume")
+    orders = common.conditions(info)["orders"]
+    if scored["order"] == "balanced" and orders:
+        if kind in ("rollout", "first-step") and not info.get("finished"):
+            lines.append("   the balanced order is incomplete: an unfinished stage has questions in some positions "
+                         "more often than in others")
+        elif (info.get("samples") or 0) % len(orders):
+            lines.append(f"   the order isn't balanced: {info.get('samples')} samples a question isn't a multiple "
+                         f"of the {len(orders)} orders")
     width = max((len(qid) for qid in scored["questions"]), default=4)
     for qid, q in scored["questions"].items():
         checks = " ".join(f"{label} {count}/{q['samples']}" for label, count in q["checks"].items())
@@ -370,7 +395,8 @@ def report(scored: dict, info: dict) -> str:
         lines.append(f"  {'':<{width}}  samples with: {seen or 'none'}; tool calls {q['tool_calls']} a sample, "
                      f"largest prompt {q['max_tokens']} tokens{extra}")
     if scored["questions"]:
-        how = "runs" if kind == "session" else "samples (paired by sample number)"
+        how = ("runs" if kind == "session" else "samples (paired by chain)" if scored["history"] == "own"
+               else "samples (paired by sample number)")
         lines.append(f"  every question passed: {scored['all_passed']}/{scored['all_samples']} {how}")
     return "\n".join(lines)
 

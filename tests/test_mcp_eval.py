@@ -679,3 +679,277 @@ def test_the_batch_starts_the_client_as_docs_mcp_says(demo):
                            "--servers-json", "/x/jobhunt-demo.json"]
     server = batch.servers_json(demo)["mcpServers"]["jobhunt"]
     assert server["args"] == ["mcp", "--db", demo, "--share", "postings,profile"]
+
+
+# --- history conditions and orders (add-mcp-eval-history) ---
+
+DEV_QUESTIONS = common.load_set("dev")["questions"]
+DEV_IDS = [q["id"] for q in DEV_QUESTIONS]
+BY_TEXT = {q["text"]: q["id"] for q in DEV_QUESTIONS}
+
+
+def last_question(body) -> str:
+    return BY_TEXT[next(m["content"] for m in reversed(body["messages"]) if m["role"] == "user")]
+
+
+def first_requests(seen) -> dict[str, list]:
+    """Each question's first requests (those whose last message is the question), in order."""
+    out: dict[str, list] = {}
+    for body in seen:
+        if body["messages"][-1]["role"] == "user":
+            out.setdefault(last_question(body), []).append(body)
+    return out
+
+
+def test_an_old_stage_reads_as_fixed_in_the_sets_order_and_sessions_as_own():
+    old = {"kind": "rollout", "set": "dev", "model": MODEL}
+    assert common.conditions(old) == {"history": "fixed", "order": "set", "orders": None}
+    assert common.conditions({**old, "kind": "first-step"})["history"] == "fixed"
+    assert common.conditions({**old, "kind": "session"})["history"] == "own"
+    assert common.condition_label(old) == "history fixed, order set"
+
+
+def test_a_batch_records_its_sessions_as_own(stub, demo, tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "OLLMCP", Path(sys.executable))
+    monkeypatch.setattr(batch, "run_session", lambda *args: 0)
+    assert batch.main(["stage", "--runs", "1", "--db", demo, "--ollama-url", stub, "--stages-dir", str(tmp_path)]) == 0
+    info = common.read_stage(tmp_path / "stage")
+    assert (info["kind"], info["history"], info["order"]) == ("session", "own", "set")
+
+
+@pytest.mark.parametrize("n, rows, each", [(5, 10, 2), (4, 4, 1)])
+def test_williams_rows_balance_positions_and_neighbours(n, rows, each):
+    ids = [f"q{i}" for i in range(n)]
+    orders = common.williams(ids)
+    assert len(orders) == rows and all(sorted(row) == ids for row in orders)
+    for position in range(n):
+        assert {qid: sum(row[position] == qid for row in orders) for qid in ids} == dict.fromkeys(ids, each)
+    pairs = [(row[j], row[j + 1]) for row in orders for j in range(n - 1)]
+    assert {(a, b): pairs.count((a, b)) for a in ids for b in ids if a != b} == {
+        (a, b): each for a in ids for b in ids if a != b}
+
+
+def test_history_in_a_given_order_is_the_questions_before_it_in_that_order():
+    order = ["dev-3", "dev-5", "dev-2", "dev-1", "dev-4"]
+    messages = common.history(DEV_QUESTIONS, DEV_IDS.index("dev-2"), order)
+    assert [m["content"] for m in messages if m["role"] == "user"] == [
+        DEV_QUESTIONS[2]["text"], DEV_QUESTIONS[4]["text"]]
+    assert common.history(DEV_QUESTIONS, DEV_IDS.index("dev-3"), order) == []
+    assert common.history(DEV_QUESTIONS, 2) == common.history(DEV_QUESTIONS, 2, DEV_IDS)
+
+
+@pytest.mark.parametrize("extra, message", [
+    (["--history", "none", "--order", "balanced"], "needs a history"),
+    (["--history", "own", "--questions", "dev-2"], "whole set"),
+    (["--history", "own", "--first-step"], "single steps"),
+])
+def test_conditions_that_cant_run_are_refused_before_sending(stub, demo, tmp_path, capsys, extra, message):
+    exits_2(run_rollouts, stub, demo, tmp_path, *extra)
+    assert message in capsys.readouterr().err
+    assert StubOllama.seen == [] and not (tmp_path / "stage").exists()
+
+
+def test_a_dry_run_names_the_conditions_and_an_unbalanced_count(stub, demo, tmp_path, capsys):
+    assert run_rollouts(stub, demo, tmp_path, "--dry-run", "--history", "none") == 0
+    out = capsys.readouterr().out
+    assert "history: none (each question alone)" in out and "order: the set's" in out
+    assert run_rollouts(stub, demo, tmp_path, "--dry-run", "--order", "balanced", "--samples", "7") == 0
+    out = capsys.readouterr().out
+    assert "history: fixed" in out and "balanced, 10 orders" in out and "the stage isn't balanced" in out
+    assert run_rollouts(stub, demo, tmp_path, "--dry-run", "--history", "own", "--samples", "2") == 0
+    assert "5 questions" in (out := capsys.readouterr().out) and "2 chains" in out and "history: own" in out
+    assert StubOllama.seen == [] and not (tmp_path / "stage").exists()
+
+
+@pytest.mark.parametrize("first_step", [False, True])
+def test_without_history_every_request_starts_with_the_question(stub, demo, tmp_path, first_step):
+    StubOllama.script = lambda body: (reply("The answer.") if body["messages"][-1]["role"] == "tool"
+                                      else reply(calls=[("jobhunt_profile_skills", {})]))
+    extra = ["--first-step"] if first_step else []
+    assert run_rollouts(stub, demo, tmp_path, "--history", "none", "--samples", "1", *extra) == 0
+    assert len(StubOllama.seen) == (5 if first_step else 10)
+    for body in StubOllama.seen:
+        assert body["messages"][0]["role"] == "user" and body["messages"][0]["content"] in BY_TEXT
+        assert [m["role"] for m in body["messages"]].count("user") == 1
+    assert {q: len(b) for q, b in first_requests(StubOllama.seen).items()} == dict.fromkeys(DEV_IDS, 1)
+    info = common.read_stage(tmp_path / "stage")
+    assert (info["history"], info["order"]) == ("none", "set") and "orders" not in info
+
+
+def test_a_balanced_stage_asks_each_sample_after_its_rows_questions(stub, demo, tmp_path):
+    assert run_rollouts(stub, demo, tmp_path, "--order", "balanced", "--questions", "dev-2") == 0
+    info = common.read_stage(tmp_path / "stage")
+    assert info["order"] == "balanced" and info["orders"] == common.williams(DEV_IDS)
+    samples = samples_of(tmp_path / "stage")
+    assert [s["row"] for s in samples] == list(range(1, 11))
+    i = DEV_IDS.index("dev-2")
+    for sample, body in zip(samples, StubOllama.seen, strict=True):
+        row = info["orders"][sample["row"] - 1]
+        assert body["messages"] == common.history(DEV_QUESTIONS, i, row) + [
+            {"role": "user", "content": DEV_QUESTIONS[i]["text"]}]
+    positions = [info["orders"][s["row"] - 1].index("dev-2") for s in samples]
+    assert sorted(positions) == [0, 0, 1, 1, 2, 2, 3, 3, 4, 4]
+
+
+def answers_by_question(stuck=()):
+    """A stub script: each question answered with its own text, or tools called for ever for those in `stuck`."""
+    def script(body):
+        qid = last_question(body)
+        return reply(calls=[("jobhunt_profile_skills", {})]) if qid in stuck else reply(f"Answer to {qid}.")
+    return script
+
+
+def test_own_chains_keep_the_models_answers_and_leave_out_a_stopped_question(stub, demo, tmp_path):
+    StubOllama.script = answers_by_question(stuck={"dev-2"})
+    assert run_rollouts(stub, demo, tmp_path, "--history", "own", "--samples", "2") == 0
+    firsts = first_requests(StubOllama.seen)
+    for k in range(2):
+        assert firsts["dev-1"][k]["messages"] == [{"role": "user", "content": DEV_QUESTIONS[0]["text"]}]
+        assert firsts["dev-3"][k]["messages"][:-1] == common.history_messages(
+            [(DEV_QUESTIONS[0]["text"], "Answer to dev-1.")])  # dev-2 stopped at the loop limit: left out
+        assert firsts["dev-4"][k]["messages"][1] == {"role": "assistant", "content": "Answer to dev-1."}
+        assert firsts["dev-4"][k]["messages"][3] == {"role": "assistant", "content": "Answer to dev-3."}
+    samples = samples_of(tmp_path / "stage")
+    assert [(s["question"], s["chain"], s["position"]) for s in samples] == [
+        (qid, k, p) for k in (1, 2) for p, qid in enumerate(DEV_IDS, start=1)]
+    scored = score.score_stage(score.load_stage(tmp_path / "stage"))
+    assert scored["history"] == "own"
+    report = score.report(scored, common.read_stage(tmp_path / "stage"))
+    assert "history own, order set" in report and "paired by chain" in report
+
+
+def test_an_own_stage_resumes_a_chain_with_its_recorded_answers(stub, demo, tmp_path, monkeypatch, capsys):
+    StubOllama.script = answers_by_question()
+    real, calls = rollout.rollout, []
+
+    async def interrupted_on_second(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(rollout, "rollout", interrupted_on_second)
+    assert run_rollouts(stub, demo, tmp_path, "--history", "own", "--samples", "1") == 130
+    assert [s["question"] for s in samples_of(tmp_path / "stage")] == ["dev-1"]
+    monkeypatch.setattr(rollout, "rollout", real)
+
+    def resume(*extra):
+        return rollout.main(["stage", "--resume", "--db", demo, "--ollama-url", stub, "--stages-dir", str(tmp_path),
+                             *extra])
+
+    for option in (["--history", "none"], ["--order", "balanced"]):
+        StubOllama.seen = []
+        exits_2(resume, *option)
+        assert "leave out " + option[0] in capsys.readouterr().err and StubOllama.seen == []
+    assert resume() == 0
+    assert StubOllama.seen[0]["messages"] == common.history_messages(
+        [(DEV_QUESTIONS[0]["text"], "Answer to dev-1.")]) + [{"role": "user", "content": DEV_QUESTIONS[1]["text"]}]
+    assert [s["question"] for s in samples_of(tmp_path / "stage")] == DEV_IDS
+    assert common.read_stage(tmp_path / "stage")["history"] == "own"
+
+
+def write_rollout_stage(folder: Path, info: dict, samples: list[dict]):
+    folder.mkdir(parents=True)
+    common.write_stage(folder, {"set": "dev", "model": MODEL, "tools": [], "companies": [], **info})
+    (folder / "samples.jsonl").write_text("".join(json.dumps(s) + "\n" for s in samples))
+
+
+def searched(question, arguments, k=1, **extra):
+    request = {"model": MODEL, "messages": [{"role": "user", "content": question["text"]}]}
+    exchanges = [{"request": request, "reply": {"content": "", "tool_calls": [
+        {"function": {"name": "jobhunt_search_postings", "arguments": arguments}}]}}]
+    return {"question": question["id"], "sample": k, "answered": None, "exchanges": exchanges, **extra}
+
+
+def test_a_stage_without_history_counts_an_unasked_filter(tmp_path):
+    dev2 = DEV_QUESTIONS[1]
+    for history, name, other in (("none", "unasked_filter", "carried_filter"),
+                                 ("fixed", "carried_filter", "unasked_filter")):
+        folder = tmp_path / history
+        write_rollout_stage(folder, {"kind": "first-step", "history": history, "order": "set", "finished": "x"},
+                            [searched(dev2, {"q": "x", "workplace": "Remote"})])
+        scored = score.score_stage(score.load_stage(folder))
+        diagnostics = scored["questions"]["dev-2"]["diagnostics"]
+        assert diagnostics[name] == 1 and other not in diagnostics
+        assert f"history {history}, order set" in score.report(scored, common.read_stage(folder))
+
+
+def test_an_unfinished_balanced_stage_is_flagged(tmp_path):
+    orders = common.williams(DEV_IDS)
+    folder = tmp_path / "balanced"
+    write_rollout_stage(folder, {"kind": "first-step", "history": "fixed", "order": "balanced", "orders": orders,
+                                 "samples": 10, "questions": ["dev-2"], "stopped": "interrupted"},
+                        [searched(DEV_QUESTIONS[1], {"q": "x"}, row=1)])
+    text = score.report(score.score_stage(score.load_stage(folder)), common.read_stage(folder))
+    assert "order balanced (10 orders)" in text and "balanced order is incomplete" in text
+
+
+def test_detail_shows_a_chains_earlier_questions(tmp_path, capsys):
+    dev1, dev2 = DEV_QUESTIONS[:2]
+    sample = searched(dev2, {"q": "x"}, chain=1, position=2)
+    sample["exchanges"][0]["request"]["messages"] = common.history_messages([(dev1["text"], "Mine.")]) + [
+        {"role": "user", "content": dev2["text"]}]
+    write_rollout_stage(tmp_path / "own", {"kind": "rollout", "history": "own", "order": "set"}, [sample])
+    assert detail.main([str(tmp_path / "own"), "dev-2"]) == 0
+    out = capsys.readouterr().out
+    assert "history own, order set (chain 1, position 2); asked after: dev-1" in out
+
+
+def test_an_own_held_out_chain_stays_unread(tmp_path, question_copies, capsys):
+    holdout = common.load_set("holdout")["questions"]
+    request = {"model": MODEL, "messages": common.history_messages([(holdout[0]["text"], "SECRET EARLIER")]) + [
+        {"role": "user", "content": holdout[1]["text"]}]}
+    sample = {"question": holdout[1]["id"], "sample": 1, "chain": 1, "position": 2, "answered": True,
+              "exchanges": [{"request": request, "reply": {"content": "SECRET ANSWER", "tool_calls": []}}]}
+    folder = tmp_path / "held-own"
+    folder.mkdir()
+    common.write_stage(folder, {"kind": "rollout", "set": "holdout", "model": MODEL, "history": "own", "tools": []})
+    (folder / "samples.jsonl").write_text(json.dumps(sample) + "\n")
+    exits_2(detail.main, [str(folder), holdout[1]["id"], "--questions-dir", str(question_copies)])
+    out = capsys.readouterr()
+    assert "SECRET" not in out.out + out.err
+
+
+def condition_stage(name, passes, history="fixed", order="set"):
+    return {**scored_stage(name, passes), "history": history, "order": order}
+
+
+def test_code_versions_are_compared_under_one_condition_only():
+    base = {"set": "dev", "kind": "rollout", "model": MODEL}
+    assert "history conditions" in compare.refusal(base, {**base, "history": "none"})
+    assert "orders" in compare.refusal({**base, "history": "fixed"}, {**base, "order": "balanced"})
+    assert compare.refusal(base, {**base, "history": "fixed", "order": "set"}) is None
+    result = compare.compare(condition_stage("a", {"dev-2": 2}), condition_stage("b", {"dev-2": 9}))
+    assert "history fixed, order set" in compare.report(result, [])
+
+
+def test_conditions_are_compared_on_one_code_version_only():
+    base = {"set": "dev", "kind": "rollout", "model": MODEL, "code_sha256": "x"}
+    assert compare.conditions_refusal(base, {**base, "history": "none"}) is None
+    assert compare.conditions_refusal(base, {**base, "order": "balanced"}) is None
+    assert "different code" in compare.conditions_refusal(base, {**base, "history": "none", "code_sha256": "y"})
+    assert "both stages ran" in compare.conditions_refusal(base, {**base, "history": "fixed"})
+    for key, other in (("set", "holdout"), ("kind", "first-step"), ("model", "qwen3:14b")):
+        assert compare.conditions_refusal(base, {**base, "history": "none", key: other})
+
+
+def test_a_history_effect_is_more_fewer_or_within_noise():
+    result = compare.compare_conditions(condition_stage("fixed", {"dev-1": 9, "dev-2": 2, "dev-3": 6}),
+                                        condition_stage("none", {"dev-1": 2, "dev-2": 9, "dev-3": 8}, history="none"))
+    assert {qid: row["verdict"] for qid, row in result["questions"].items()} == {
+        "dev-1": "fewer", "dev-2": "more", "dev-3": "within noise"}
+    assert "verdict" not in result
+    text = compare.conditions_report(result, [])
+    assert "history none against fixed" in text and "p(more)" in text and "p(fewer)" in text
+    assert "set:" not in text
+
+
+def test_compare_conditions_refuses_different_code_from_the_command_line(tmp_path, capsys):
+    for name, code in (("a", "x"), ("b", "y")):
+        write_rollout_stage(tmp_path / name, {"kind": "first-step", "history": "fixed" if name == "a" else "none",
+                                              "code_sha256": code, "finished": "x"},
+                            [searched(DEV_QUESTIONS[1], {"q": "x"})])
+    exits_2(compare.main, ["--conditions", str(tmp_path / "a"), str(tmp_path / "b")])
+    assert "different code" in capsys.readouterr().err
+    exits_2(compare.main, [str(tmp_path / "a"), str(tmp_path / "b")])
+    assert "history conditions" in capsys.readouterr().err
