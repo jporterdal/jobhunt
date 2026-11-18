@@ -1,0 +1,1 @@
+**Impact: none.** The change touches only how measurements are reported and how adoption is decided (`scripts/mcp_eval/compare.py`, `enrich/link_eval.py`, docs and one settings help line); nothing a parser implements, receives or returns, nor the posting file format, changes.
