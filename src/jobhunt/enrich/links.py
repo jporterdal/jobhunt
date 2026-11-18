@@ -70,8 +70,9 @@ RETRIEVALS = {
     r.name: r
     for r in (
         Retrieval(NAMES),
-        # Measured 2026-10-06: within noise of names. It finds concept-to-tool links names can't, but its
-        # shortlists fill to 5 and break refusals. Kept for later measurement; size and floor not tuned.
+        # Measured 2026-10-06 against names (both judged by @5, 79 reference posting skills): fixed 10, broke 18,
+        # net -0.101 [-0.225, +0.028], mid-p 0.068. It finds concept-to-tool links names can't, but its shortlists
+        # fill to 5 and break refusals. Kept for later measurement; size and floor not tuned.
         Retrieval(expand.STEP, expansion=expand.STEP, size=5, floor=0.75),
     )
 }
@@ -356,9 +357,10 @@ JUDGE_SCHEMA = {
 }
 
 # @5: @2 (a stricter "same", weaker relation when in doubt, examples of "none") with its two examples replaced: both
-# were among the reference links it is measured against, so that measurement wasn't fair. Current since 2026-10-06:
-# within noise of @2 (4 links lost, p=0.06), whose figures those examples flattered. @2, @3 (a looser "none") and
-# @4 (one request per candidate) were measured and deleted; their figures are in improve-skill-linking's design.
+# were among the reference links it is measured against, so that measurement wasn't fair. Current since 2026-10-06,
+# by the user's decision: against it, on 79 reference posting skills, @2 fixed 3 and broke 1 (net +0.025
+# [-0.024, +0.075], mid-p 0.188), figures those examples flattered. @2, @3 (a looser "none") and @4 (one request per
+# candidate) were measured and deleted; their figures are in improve-skill-linking's design.
 JUDGE_SYSTEM = """You compare one skill a job posting asks for with skills on a person's CV, to decide whether the
 person has the posting's skill.
 For each numbered CV skill, choose how it relates to the posting's skill:
@@ -414,8 +416,9 @@ class LinkJudge:
 
 
 # @6: @5, with each profile skill shown beside the CV line its evidence quote was found in instead of the quote
-# alone (most quotes are only the skill's name), and told how to read that line. Measured 2026-10-06: within noise
-# of @5; kept for later measurement.
+# alone (most quotes are only the skill's name), and told how to read that line. Measured 2026-10-06 against @5 on
+# 79 reference posting skills: fixed 2, broke 4, net -0.025 [-0.085, +0.035], mid-p 0.227; kept for later
+# measurement.
 JUDGE_SYSTEM_V6 = JUDGE_SYSTEM.replace(
     "Judge each CV skill on its own:",
     "Each CV skill comes with the CV line it was found in. Use the line to see what the person did with that skill, "

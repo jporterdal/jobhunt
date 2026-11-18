@@ -1,7 +1,7 @@
 # Measuring how a model uses the MCP server
 
-`scripts/mcp_eval/` measures how a model answers questions with jobhunt's MCP tools ([docs/mcp.md](mcp.md)), so a
-change to the tools' wording or results is adopted only when it measures better. It runs on the demo database only,
+`scripts/mcp_eval/` measures how a model answers questions with jobhunt's MCP tools ([docs/mcp.md](mcp.md)), so you
+can decide on evidence whether a change to the tools' wording or results is adopted. It runs on the demo database only,
 with the client and model that [docs/mcp.md](mcp.md#keeping-everything-on-this-machine) documents (ollmcp with
 `qwen3:8b` on a local Ollama), and it runs a model only when you start it.
 
@@ -14,7 +14,8 @@ extra, and they write to the ignored folder `data/mcp-eval/`.
 questions, so 3 to 6 samples a wording. At that size a stage moved by one or two questions with nothing changed, and
 every wording was tuned on one question (the design's D9, `openspec/changes/archive/*-add-mcp-server/design.md`).
 Here, each question is sampled many times on its own (a *rollout*), a held-out set is kept that the wording is never
-tuned on, and two code versions are compared by an exact test.
+tuned on, and two code versions are compared question by question, with each difference's size, precision and
+strength of evidence.
 
 ## Terms
 
@@ -238,44 +239,86 @@ Diagnostics, counted in every sample:
 The report also gives the mean number of tool calls a sample and the largest prompt in tokens. `detail.py` heads
 each sample with its condition, and for a balanced order or an `own` chain with the questions asked before it.
 
-## The verdict, and adopting a change
+## Comparing code versions
 
-`compare.py CURRENT CANDIDATE` gives each question both pass counts and a verdict. The verdict comes from a
-one-sided exact test (Fisher's) of the two counts at p ≤ 0.05: `better` when the candidate passes more often,
-`worse` when it passes less often, `within noise` otherwise. Both p-values are shown. The set is `better` when some
-question is `better` and none is `worse`, `worse` when any question is `worse`, and `within noise` otherwise. Stages
-of different sets, kinds, models, history conditions or orders are refused, and the report names the condition. Equal code hashes, different Ollama versions and different sample
-counts are warned about. With `--questions`, only the questions in both stages are compared, and the report names
-the rest.
+`compare.py CURRENT CANDIDATE` gives each question:
 
-At 10 samples against 10, 2 against 8 passes gives p ≈ 0.012 (`better`), and 6 against 8 gives p ≈ 0.31 (`within
-noise`). Large effects are found, and differences of one or two samples aren't claimed. No correction is made for
-testing five questions at once, so the rule asks for more than one `better`:
+- **both pass counts**, `2/10 -> 6/10`;
+- **the direction**: `more` when the candidate passes more often, `fewer` when less often, `same` when equally often.
+  It describes the counts and nothing more;
+- **the difference** in pass rate (the candidate's minus the current code's) with a **95% interval** (Newcombe's
+  hybrid score interval, built from the two stages' Wilson intervals). It stays within −1 and +1 and behaves at 0/10
+  and 10/10. When both stages passed, or both failed, every sample of a question, the report says so instead of giving
+  an interval: the data say nothing about a difference there;
+- **the mid-p value** for the observed direction (below).
 
-**A change to the server's tool descriptions, argument descriptions, instructions or result fields, made to change
-how models use the tools, is adopted only when all of the following hold, with the same model, comparing full
-rollouts of the candidate with the current code's in the set's order under both `fixed` and `none`:**
+The last line counts the questions in each direction (`directions: 2 more, 0 fewer, 3 same`). Nothing is compared
+with a threshold, and there is no verdict for a question or the set. Stages of different sets, kinds, models, history
+conditions or orders are refused, and the report names the condition. Equal code hashes, different Ollama versions
+and different sample counts are warned about. With `--questions`, only the questions in both stages are compared, and
+the report names the rest. `--json` gives each question's `current` and `candidate` counts, `direction`, `difference`,
+`interval` (`[low, high]`, or `null` with `all_same` `"passed"` or `"failed"`), `mid_p_more` and `mid_p_fewer` (four
+places; the text rounds differences to two places and mid-p to three), and the set's `directions`.
 
-1. the dev set is `better` under at least one of the two conditions;
-2. no dev question is `worse` under either;
-3. the held-out set isn't `worse` under either;
-4. a session batch with the change (`batch.py`) shows no question that the rollouts passed failing in every
-   session.
+### Reading the figures
 
-One condition `better` is enough because a fix for something the history causes (a carried `workplace` filter) can't
-show without history, and a fix to how a question alone is read may be hidden by history. No `worse` under either
-keeps a gain in one condition from being paid for in the other. `own` and balanced stages don't count toward
-adoption. The change's design records the comparisons' figures (held-out as counts). A candidate that isn't adopted
-is removed from the code.
+**The mid-p value.** Suppose the candidate made no difference: then the passes of both stages together would be
+shared between them at random. The mid-p value for `more` is the chance, under that supposition, of the candidate
+getting more passes than it did, plus half the chance of exactly its count. A small value says the counts would be
+unusual if nothing had changed; it isn't the chance that nothing changed, and it says nothing about how large the
+change is (the difference and its interval do). The two directions' values add to 1, so `same` is 0.5. Mid-p is used
+instead of Fisher's exact p-value because, with the total of passes fixed, the exact p-value counts the whole of the
+observed outcome as evidence against change and is too large at these sizes: for 2/10 → 6/10, Fisher's p is 0.085 and
+the mid-p 0.047.
+
+**A cross-check.** With uniform priors on both pass rates, the posterior probability that the candidate's rate is
+*not* higher is close to the mid-p: 0.040 for 2/10 → 6/10, 0.155 for 7/10 → 9/10 (mid-p 0.167). Reading the mid-p as
+"about the chance the direction is wrong" is a fair rough guide here.
+
+**Why the intervals are wide.** At 10 samples against 10, an interval is 0.6–0.75 wide:
+
+| Counts | Difference [95% interval] | mid-p |
+|---|---|---|
+| 2/10 → 8/10 | +0.60 [+0.16, +0.80] | 0.006 |
+| 6/10 → 8/10 | +0.20 [−0.19, +0.52] | 0.192 |
+
+The first is a large change measured well enough to be sure of its direction; the second is consistent with anything
+from a small loss to a large gain. Differences of one or two samples tell little, and two full dev stages of the same
+code differ by about that much (see "Costs"). No figure is corrected for testing five questions at once: none is
+compared with a threshold, so there is no error rate to control, but among five questions one small mid-p by chance
+is unremarkable.
+
+### Adopting a change
+
+A change to the server's tool descriptions, argument descriptions, instructions or result fields, made to change how
+models use the tools, is adopted only by **your decision**. Before it, the change is measured with the same model,
+comparing full rollouts of the candidate with the current code's in the set's order under both `fixed` and `none`
+(dev and held-out sets), and with a session batch through ollmcp (`batch.py`). Whoever runs the measurement, a person
+or an agent, presents the figures and asks you; it never decides, infers or assumes adoption from any figure or rule,
+and being asked to run the measurement isn't a decision to adopt. The figures presented cover at least:
+
+1. the direction and size of the dev differences under each condition;
+2. any dev question that passed fewer samples, and by how much;
+3. the held-out set's directions under each condition (counts and the figures computed from them);
+4. any question that the rollouts passed and that failed in every session.
+
+Both conditions are measured because a fix for something the history causes (a carried `workplace` filter) can't
+show without history, and a fix to how a question alone is read may be hidden by history; a gain under one condition
+can be paid for under the other. `own` and balanced stages are diagnostics, not part of the figures. The change's
+design records the figures, your decision and your reasons. A candidate that isn't adopted is removed from the code.
 
 ### Comparing conditions
 
 `compare.py --conditions A B` compares two stages of the same code (equal code hashes), set, model and kind whose
-history condition or order differ: for example the current code's `fixed` stage with its `none` stage. It uses the
-same test per question and names the verdict for what it measures: `more` when B passes more often, `fewer` when
-less often, `within noise` otherwise, with both p-values. It gives no set verdict: it attributes an effect to the
-history (or order), and decides nothing. Stages of different code, sets, models or kinds, or of the same condition,
-are refused.
+history condition or order differ: for example the current code's `fixed` stage with its `none` stage. It gives the
+same figures per question (`more` when B passes more often), and the direction counts. It attributes an effect to the
+history (or order) and decides nothing. Stages of different code, sets, models or kinds, or of the same condition,
+are refused. For example, `baseline-dev` against `none-dev`:
+
+```
+  dev-2  2/10 -> 6/10    more   +0.40 [-0.02, +0.67]  mid-p 0.047
+  dev-5  7/10 -> 9/10    more   +0.20 [-0.16, +0.51]  mid-p 0.167
+```
 
 ## Costs
 
@@ -295,4 +338,5 @@ costs more than a full one. Measure a first-call decision on the questions it co
 `--first-step --questions dev-2` (30 samples, about 12 minutes). Comparing a candidate with the current code by the
 adoption rule needs a full dev stage and a full held-out stage of the candidate under each of `fixed` and `none`,
 about 70 minutes each condition (about 140 minutes), plus a session batch. The current code's stages are reused while
-its code hash is unchanged. Two full dev stages of the same code compared as `within noise` on every question.
+its code hash is unchanged. Two full dev stages of the same code (`baseline-dev`, `baseline-dev-2`) differed by one
+sample on two questions (6/10 → 7/10 and 7/10 → 6/10, mid-p 0.338 each) and not at all on the other three.

@@ -1,5 +1,6 @@
 """Link measurement (`jobhunt eval --links`): how well candidate-finding methods and judging versions reproduce
-the links the user chose by hand (their overrides), so a new linking method is adopted or discarded on evidence.
+the links the user chose by hand (their overrides), so the user can decide on evidence whether a new linking method
+is adopted or discarded.
 
 Measuring stores its judgments in link_measurements, which only this module reads: they never decide a link.
 Expansions and vectors are the same as the app's for the same skill, step and context, so both share them.
@@ -535,50 +536,81 @@ def sweep(retrieval: RetrievalResult, reference: ReferenceSet) -> list[dict]:
     return out
 
 
-SIGNIFICANCE = 0.05
+Z = 1.959963984540054  # the standard normal's 97.5th percentile: 95% intervals
+
+
+def wilson(x: int, n: int) -> tuple[float, float]:
+    """The 95% Wilson score interval for x of n."""
+    p = x / n
+    scale = 1 + Z * Z / n
+    centre = (p + Z * Z / (2 * n)) / scale
+    half = Z * math.sqrt(p * (1 - p) / n + Z * Z / (4 * n * n)) / scale
+    return max(0.0, centre - half), min(1.0, centre + half)
 
 
 @dataclass(frozen=True)
 class Comparison:
     """Reference posting skills one combination gets right (a right link, or a kept refusal) and the base gets
-    wrong (`fixed`), and the other way round (`broke`)."""
+    wrong (`fixed`), and the other way round (`broke`), of `size` reference posting skills, `right` of which the base
+    gets right. Judging the same skill twice can flip, so small differences are expected; nothing here is compared
+    with a threshold, and adopting a method is the user's decision."""
 
+    size: int
+    right: int
     fixed: int
     broke: int
 
     @property
-    def p(self) -> float:
-        """One-sided exact sign test: the chance of a split at least this uneven if each differing posting skill
-        were a coin toss. Judging the same skill twice can flip, so small differences are expected."""
-        n = self.fixed + self.broke
-        if n == 0:
-            return 1.0
-        return sum(math.comb(n, k) for k in range(min(self.fixed, self.broke) + 1)) / 2 ** n
+    def direction(self) -> str:
+        return "more right" if self.fixed > self.broke else "fewer right" if self.fixed < self.broke else "same"
 
     @property
-    def verdict(self) -> str:
-        if self.fixed == self.broke == 0:
-            return "same"
-        if self.p <= SIGNIFICANCE and self.fixed != self.broke:
-            return "better" if self.fixed > self.broke else "worse"
-        return "within noise"
+    def mid_p(self) -> float:
+        """One-sided mid-p of the exact sign test for the observed direction: with n differing posting skills and k
+        the smaller count, the chance of fewer than k if each went either way with equal chance, plus half the
+        chance of exactly k (`same`: 0.5)."""
+        n, k = self.fixed + self.broke, min(self.fixed, self.broke)
+        if self.fixed == self.broke:
+            return 0.5
+        return (sum(math.comb(n, i) for i in range(k)) + math.comb(n, k) / 2) / 2**n
+
+    @property
+    def net(self) -> float:
+        """(fixed - broke) / size: the change in the share of reference posting skills right."""
+        return (self.fixed - self.broke) / self.size if self.size else 0.0
+
+    @property
+    def interval(self) -> tuple[float, float]:
+        """The net change's 95% interval for paired proportions (Newcombe's method 10: the two methods' Wilson
+        intervals and the phi correlation of the paired table)."""
+        n = self.size
+        if not n:
+            return 0.0, 0.0
+        both, broke, fixed = self.right - self.broke, self.broke, self.fixed
+        neither = n - both - broke - fixed
+        p1, p2 = self.right / n, (both + fixed) / n
+        (l1, u1), (l2, u2) = wilson(both + broke, n), wilson(both + fixed, n)
+        margins = (both + broke) * (fixed + neither) * (both + fixed) * (broke + neither)
+        phi = (both * neither - broke * fixed) / math.sqrt(margins) if margins else 0.0
+        below = (p2 - l2) ** 2 - 2 * phi * (p2 - l2) * (u1 - p1) + (u1 - p1) ** 2
+        above = (u2 - p2) ** 2 - 2 * phi * (u2 - p2) * (p1 - l1) + (p1 - l1) ** 2
+        d = p2 - p1
+        return d - math.sqrt(max(0.0, below)), d + math.sqrt(max(0.0, above))
 
     def describe(self) -> str:
-        if self.verdict == "same":
-            return "same"
-        return f"{self.verdict} (fixed {self.fixed}, broke {self.broke}, p={self.p:.2f})"
+        """`fixed 2, broke 4: fewer right, net -0.025 [-0.085, +0.035], mid-p 0.227`."""
+        lo, hi = self.interval
+        mid_p = "< 0.001" if self.mid_p < 0.0005 else f"{self.mid_p:.3f}"
+        return (f"fixed {self.fixed}, broke {self.broke}: {self.direction}, net {self.net:+.3f} "
+                f"[{lo:+.3f}, {hi:+.3f}], mid-p {mid_p}")
 
 
 def compare(base: ComboResult, other: ComboResult) -> Comparison:
     """`other` against `base`, posting skill by posting skill."""
     before = {o.ref.key: _good(o) for o in _outcomes(base)}
     after = [(before[o.ref.key], _good(o)) for o in _outcomes(other)]
-    return Comparison(sum(not a and b for a, b in after), sum(a and not b for a, b in after))
-
-
-def verdict(base: ComboResult, other: ComboResult) -> str:
-    """'better', 'worse', 'same' or 'within noise' for `other` against `base`."""
-    return compare(base, other).verdict
+    return Comparison(len(before), sum(before.values()), sum(not a and b for a, b in after),
+                      sum(a and not b for a, b in after))
 
 
 def _link_label(link, names: dict[int, str]) -> str:
@@ -640,7 +672,7 @@ def format_text(report: Report) -> str:
         counts, added = result.counts(), result.counts(with_added=True)
         lines.append(
             f"Judging: {result.combo.label}"
-            + ("" if result is base else f"  verdict: {compare(base, result).describe()}")
+            + ("" if result is base else f"  {compare(base, result).describe()}")
         )
         for name, label in OUTCOMES:
             lines.append(f"  {label:<40} {counts[name]:>3}   (right skill added: {added[name]})")
@@ -689,7 +721,9 @@ def _judged_dict(j: Judged | None, names: dict[int, str]) -> dict | None:
 
 
 def _comparison_dict(c: Comparison) -> dict:
-    return {"fixed": c.fixed, "broke": c.broke, "p": round(c.p, 4)}
+    lo, hi = c.interval
+    return {"fixed": c.fixed, "broke": c.broke, "direction": c.direction, "net": round(c.net, 4),
+            "interval": [round(lo, 4), round(hi, 4)], "mid_p": round(c.mid_p, 4)}
 
 
 def to_dict(report: Report) -> dict:
@@ -720,7 +754,6 @@ def to_dict(report: Report) -> dict:
             {
                 "retrieval": result.combo.retrieval,
                 "judge": result.combo.judge,
-                "verdict": None if result is base else verdict(base, result),
                 "comparison": None if result is base else _comparison_dict(compare(base, result)),
                 "counts": result.counts(),
                 "counts_right_skill_added": result.counts(with_added=True),

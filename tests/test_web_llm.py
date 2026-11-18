@@ -222,7 +222,8 @@ def test_default_holdout_share(client, three):
     html = evaluation_html(text(get(client, "/settings")))
     assert 'name="holdout_share" value="0.5" min="0.1" max="0.9" step="0.05"' in html
     assert "Labelled postings: 1 dev, 1 holdout (1 not drawn)." in html
-    for point in ("Raise it when new dev postings fail", "Lower it for a while", "within noise", "moves no posting"):
+    for point in ("Raise it when new dev postings fail", "Lower it for a while",
+                  "differences too imprecise to tell methods apart", "moves no posting"):
         assert point in html
 
 

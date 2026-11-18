@@ -1,4 +1,4 @@
-"""Link measurement: the reference set, request statement and reuse, scoring, verdicts, the preview, keeping
+"""Link measurement: the reference set, request statement and reuse, scoring, comparisons, the preview, keeping
 measurement apart from the app, and `jobhunt eval --links`."""
 
 import json
@@ -202,20 +202,42 @@ def test_judging_on_its_own_shortlist_and_right_skill_added(labelled):
     assert result.kept == 1  # Vector databases: none to all its candidates
 
 
-# --- Verdicts and differences (5.2) ---
+# --- Comparisons and differences (5.2) ---
 
 
-@pytest.mark.parametrize("fixed,broke,expected", [
-    (0, 0, "same"),
-    (5, 0, "better"),  # p = 1/32
-    (0, 5, "worse"),
-    (4, 0, "within noise"),  # p = 1/16: four flips can happen by chance
-    (8, 1, "better"),  # p = 9/256
-    (6, 1, "within noise"),  # p = 7/64
-    (3, 3, "within noise"),
+@pytest.mark.parametrize("fixed,broke,direction,net,interval,mid_p", [
+    (5, 0, "more right", 0.125, (0.023, 0.220), 1 / 64),
+    (0, 4, "fewer right", -0.100, (-0.187, -0.008), 1 / 32),
+    (0, 0, "same", 0.0, (0.0, 0.0), 0.5),
+    (3, 3, "same", 0.0, None, 0.5),
+    (6, 1, "more right", 0.125, None, 4.5 / 128),  # (1 + 7/2) / 128
 ])
-def test_verdicts(fixed, broke, expected):
-    assert link_eval.Comparison(fixed, broke).verdict == expected
+def test_comparison_figures(fixed, broke, direction, net, interval, mid_p):
+    c = link_eval.Comparison(40, 20, fixed, broke)
+    assert (c.direction, c.net, c.mid_p) == (direction, pytest.approx(net), pytest.approx(mid_p))
+    if interval:
+        assert c.interval == (pytest.approx(interval[0], abs=5e-4), pytest.approx(interval[1], abs=5e-4))
+    assert not hasattr(c, "verdict")
+
+
+@pytest.mark.parametrize("fixed,broke,net,interval,mid_p", [
+    (3, 1, 0.025, (-0.024, 0.075), 0.188),
+    (2, 4, -0.025, (-0.085, 0.035), 0.227),
+    (10, 18, -0.101, (-0.225, 0.028), 0.068),
+    (2, 9, -0.089, (-0.166, -0.009), 0.019),
+])
+def test_the_recorded_link_results_restated(fixed, broke, net, interval, mid_p):
+    """docs/measurement.md's table: 79 reference posting skills, 48 right under the app's method."""
+    c = link_eval.Comparison(79, 48, fixed, broke)
+    assert (c.net, c.mid_p) == (pytest.approx(net, abs=1e-3), pytest.approx(mid_p, abs=1e-3))
+    assert c.interval == (pytest.approx(interval[0], abs=1e-3), pytest.approx(interval[1], abs=1e-3))
+
+
+def test_describing_a_comparison():
+    assert link_eval.Comparison(40, 20, 5, 0).describe() == (
+        "fixed 5, broke 0: more right, net +0.125 [+0.023, +0.220], mid-p 0.016")
+    assert link_eval.Comparison(40, 20, 0, 0).describe() == (
+        "fixed 0, broke 0: same, net +0.000 [+0.000, +0.000], mid-p 0.500")
 
 
 def test_comparing_posting_skill_by_posting_skill(labelled):
@@ -233,8 +255,10 @@ def test_comparing_posting_skill_by_posting_skill(labelled):
     _, base = measure(db, client(first))
     _, other = measure(db, client(second), fresh=True)
     comparison = link_eval.compare(base.results[0], other.results[0])
-    assert (comparison.fixed, comparison.broke, comparison.verdict) == (0, 2, "within noise")
-    assert comparison.describe() == "within noise (fixed 0, broke 2, p=0.25)"
+    assert (comparison.fixed, comparison.broke, comparison.direction) == (0, 2, "fewer right")
+    assert comparison.size == 4 and comparison.right == 2
+    assert comparison.describe().startswith("fixed 0, broke 2: fewer right, net -0.500 [")
+    assert comparison.describe().endswith("mid-p 0.125")
 
 
 def test_tied_with_yours(labelled):
@@ -259,12 +283,18 @@ def test_combinations_compared_with_differences(labelled):
     c = client(answer)
     _, report = measure(db, c, judges=["link-judge@6", "link-judge@5"])
     assert [r.combo.judge for r in report.results] == ["link-judge@5", "link-judge@6"]  # the app's comes first
-    assert link_eval.verdict(report.results[0], report.results[1]) == "same"
+    assert link_eval.compare(report.results[0], report.results[1]).direction == "same"
     data = json.loads(link_eval.report_json(report))
     entry = next(e for e in data["per_posting_skill"] if e["key"] == "ci/cd")
     assert entry["user"]["relation"] == "specific"
     assert entry["combinations"]["names + link-judge@5"]["link"]["name"] == "GitHub Actions"
-    assert data["combinations"][1]["verdict"] == "same"
+    assert "verdict" not in data["combinations"][1] and data["combinations"][0]["comparison"] is None
+    comparison = data["combinations"][1]["comparison"]
+    assert {k: comparison[k] for k in ("fixed", "broke", "direction", "net", "mid_p")} == {
+        "fixed": 0, "broke": 0, "direction": "same", "net": 0.0, "mid_p": 0.5}
+    low, high = comparison["interval"]
+    assert low <= 0 <= high
+    assert "fixed 0, broke 0: same" in link_eval.format_text(report)
 
 
 def test_previewing_a_candidate_method(labelled):

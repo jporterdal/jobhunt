@@ -414,7 +414,7 @@ def test_the_earlier_scorers_figures_on_its_runs(demo):
     assert change2["questions"]["dev-2"]["passed"] == 0 and change2["questions"]["dev-2"]["samples"] == 5
 
 
-# --- verdict (3.2) ---
+# --- comparison figures (3.2) ---
 
 
 @pytest.mark.parametrize("a, b, p", [(2, 8, 0.0115), (2, 9, 0.0027), (6, 8, 0.314)])
@@ -428,17 +428,76 @@ def scored_stage(name, passes, kind="rollout"):
             "questions": {qid: {"passed": p, "samples": 10} for qid, p in passes.items()}}
 
 
-def test_a_clear_improvement_is_better_for_the_question_and_the_set():
+@pytest.mark.parametrize("a, b, difference, interval, mid_p", [
+    (2, 9, 0.70, (0.27, 0.87), 0.001),
+    (6, 8, 0.20, (-0.19, 0.52), 0.192),
+    (2, 6, 0.40, (-0.02, 0.67), 0.047),  # Fisher's p is 0.085 here: the same data, either side of 0.05
+])
+def test_differences_intervals_and_mid_p(a, b, difference, interval, mid_p):
+    d, lo, hi = compare.difference(a, 10, b, 10)
+    assert (d, lo, hi) == (pytest.approx(difference, abs=5e-3), pytest.approx(interval[0], abs=5e-3),
+                           pytest.approx(interval[1], abs=5e-3))
+    assert compare.mid_p_more(a, 10, b, 10) == pytest.approx(mid_p, abs=5e-4)
+    assert compare.mid_p_fewer(b, 10, a, 10) == pytest.approx(mid_p, abs=5e-4)
+
+
+@pytest.mark.parametrize("a, n, b, m", [(2, 10, 6, 10), (0, 10, 0, 10), (10, 10, 3, 10), (4, 5, 7, 10)])
+def test_the_two_mid_p_values_add_to_one(a, n, b, m):
+    assert compare.mid_p_more(a, n, b, m) + compare.mid_p_fewer(a, n, b, m) == pytest.approx(1)
+
+
+def test_equal_counts_are_same_at_mid_p_one_half():
+    row = compare.figures(5, 10, 5, 10)
+    assert (row["direction"], row["difference"], row["mid_p_more"], row["mid_p_fewer"]) == ("same", 0, 0.5, 0.5)
+    assert row["interval"] == [pytest.approx(-0.3725, abs=1e-4), pytest.approx(0.3725, abs=1e-4)]
+
+
+def test_a_large_difference_is_more_with_its_estimate_and_no_verdict():
     result = compare.compare(scored_stage("a", {"dev-1": 10, "dev-2": 2}), scored_stage("b", {"dev-1": 10, "dev-2": 9}))
-    assert result["questions"]["dev-2"]["verdict"] == "better"
-    assert result["questions"]["dev-1"]["verdict"] == "within noise" and result["verdict"] == "better"
+    row = result["questions"]["dev-2"]
+    assert (row["current"], row["candidate"], row["direction"]) == ([2, 10], [9, 10], "more")
+    assert row["difference"] == 0.7 and row["interval"] == [0.2658, 0.8652]
+    assert row["mid_p_more"] == 0.0014 and row["mid_p_fewer"] == 0.9986
+    assert "verdict" not in result and "verdict" not in row and "p_better" not in row
+    text = compare.report(result, [])
+    assert "more   +0.70 [+0.27, +0.87]  mid-p 0.001" in text
+    for word in ("better", "worse", "within noise", "verdict"):
+        assert word not in text
 
 
-def test_small_differences_are_within_noise_and_any_worse_makes_the_set_worse():
-    small = compare.compare(scored_stage("a", {"dev-2": 6}), scored_stage("b", {"dev-2": 8}))
-    assert small["questions"]["dev-2"]["verdict"] == "within noise" and small["verdict"] == "within noise"
-    mixed = compare.compare(scored_stage("a", {"dev-1": 2, "dev-2": 9}), scored_stage("b", {"dev-1": 9, "dev-2": 2}))
-    assert mixed["verdict"] == "worse"
+def test_a_small_difference_gets_figures_not_a_verdict():
+    result = compare.compare(scored_stage("a", {"dev-2": 6}), scored_stage("b", {"dev-2": 8}))
+    text = compare.report(result, [])
+    assert "6/10 -> 8/10  more   +0.20 [-0.19, +0.52]  mid-p 0.192" in text
+    fewer = compare.report(compare.compare(scored_stage("a", {"dev-2": 8}), scored_stage("b", {"dev-2": 6})), [])
+    assert "fewer  -0.20 [-0.52, +0.19]  mid-p 0.192" in fewer
+
+
+def test_every_sample_passed_or_failed_in_both_has_no_interval():
+    result = compare.compare(scored_stage("a", {"dev-1": 10, "dev-3": 0}), scored_stage("b", {"dev-1": 10, "dev-3": 0}))
+    passed, failed = result["questions"]["dev-1"], result["questions"]["dev-3"]
+    assert (passed["direction"], passed["interval"], passed["all_same"], passed["mid_p_more"]) == (
+        "same", None, "passed", 0.5)
+    assert (failed["interval"], failed["all_same"]) == (None, "failed")
+    text = compare.report(result, [])
+    assert "same   passed every sample in both  mid-p 0.500" in text
+    assert "same   failed every sample in both  mid-p 0.500" in text
+
+
+def test_the_set_counts_questions_in_each_direction():
+    result = compare.compare(scored_stage("a", {"dev-1": 2, "dev-2": 3, "dev-3": 8, "dev-4": 5, "dev-5": 10}),
+                             scored_stage("b", {"dev-1": 9, "dev-2": 4, "dev-3": 2, "dev-4": 5, "dev-5": 10}))
+    assert result["directions"] == {"more": 2, "fewer": 1, "same": 2}
+    assert "verdict" not in result
+    assert "directions: 2 more, 1 fewer, 2 same" in compare.report(result, [])
+
+
+def test_a_stage_without_samples_has_no_figures():
+    empty = {"stage": "b", "kind": "rollout", "set": "dev", "model": MODEL,
+             "questions": {"dev-1": {"passed": 0, "samples": 0}}}
+    result = compare.compare(scored_stage("a", {"dev-1": 4}), empty)
+    assert result["questions"]["dev-1"]["direction"] is None
+    assert "no samples in one stage" in compare.report(result, [])
 
 
 def test_stages_of_different_sets_models_or_kinds_are_refused():
@@ -933,15 +992,20 @@ def test_conditions_are_compared_on_one_code_version_only():
         assert compare.conditions_refusal(base, {**base, "history": "none", key: other})
 
 
-def test_a_history_effect_is_more_fewer_or_within_noise():
+def test_a_history_effect_gets_the_same_figures():
     result = compare.compare_conditions(condition_stage("fixed", {"dev-1": 9, "dev-2": 2, "dev-3": 6}),
-                                        condition_stage("none", {"dev-1": 2, "dev-2": 9, "dev-3": 8}, history="none"))
-    assert {qid: row["verdict"] for qid, row in result["questions"].items()} == {
-        "dev-1": "fewer", "dev-2": "more", "dev-3": "within noise"}
-    assert "verdict" not in result
+                                        condition_stage("none", {"dev-1": 2, "dev-2": 9, "dev-3": 6}, history="none"))
+    assert {qid: row["direction"] for qid, row in result["questions"].items()} == {
+        "dev-1": "fewer", "dev-2": "more", "dev-3": "same"}
+    row = result["questions"]["dev-2"]
+    assert (row["first"], row["second"], row["difference"], row["interval"]) == ([2, 10], [9, 10], 0.7,
+                                                                                [0.2658, 0.8652])
+    assert row["mid_p_more"] == 0.0014 and "verdict" not in result and "verdict" not in row
+    assert result["directions"] == {"more": 1, "fewer": 1, "same": 1}
     text = compare.conditions_report(result, [])
-    assert "history none against fixed" in text and "p(more)" in text and "p(fewer)" in text
-    assert "set:" not in text
+    assert "history none against fixed" in text and "more   +0.70 [+0.27, +0.87]  mid-p 0.001" in text
+    assert "fewer  -0.70 [-0.87, -0.27]  mid-p 0.001" in text
+    assert "set:" not in text and "within noise" not in text
 
 
 def test_compare_conditions_refuses_different_code_from_the_command_line(tmp_path, capsys):

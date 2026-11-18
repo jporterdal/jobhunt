@@ -58,43 +58,59 @@ names, cosine ≥ 0.75, at most 5). A judge model then picks a relation for each
 **Reference set.** The user's overrides: links they set by hand, and "no link" answers. At the end of the
 measurement the set held 52 links and 27 refusals.
 
-**Paired verdict** (`jobhunt eval --links`). Two methods are compared posting skill by posting skill. A skill counts
-as right under a method if its link is right or a refusal is kept. The report counts the skills one method fixes
-and the other breaks, and applies a one-sided exact sign test. The verdict is `better` or `worse` only at p ≤ 0.05,
-and otherwise `within noise`. Judging the same skill twice flips a few answers, so differences of 2–4 links are
-noise on a set this size.
+**Paired comparison** (`jobhunt eval --links`). Two methods are compared posting skill by posting skill. A skill
+counts as right under a method if its link is right or a refusal is kept. The report gives:
+
+- the skills the candidate **fixes** (right under it, wrong under the current method) and **breaks** (the other way
+  round), and the direction they point: `more right`, `fewer right` or `same`;
+- the **net change**, (fixed − broken) ÷ the number of reference skills, with a 95% interval for paired proportions
+  (Newcombe's method 10, from the two methods' Wilson intervals and how their answers correlate);
+- the one-sided **mid-p value** of the exact sign test for that direction: if each differing skill were equally
+  likely to go either way, the chance of a split more uneven than observed, plus half the chance of exactly this one.
+  A small value says the split would be unusual by chance; it doesn't say how large the change is, and the two
+  directions' values add to 1 (`same` is 0.5).
+
+Nothing is compared with a threshold and there is no verdict. Judging the same skill twice flips a few answers, so
+differences of 2–4 skills on a set this size are what re-judging alone can produce, and the intervals show it.
 
 **Results** (against the app's method, bare names with `link-judge@5`, which got 21 of 52 links right and kept 27
-of 27 refusals):
+of 27 refusals: 48 of 79 reference skills right). Restated from the recorded counts; the archived design gives the
+verdicts used at the time:
 
-| Method | Fixed | Broke | Verdict |
-|---|---|---|---|
-| Judge `@2` (examples drawn from the reference set) | 3 | 1 | within noise |
-| Judge `@6` (shows the CV line, not only the quote) | 2 | 4 | within noise |
-| Shortlist from expanded phrasings (`skill-expand@1`) | 10 | 18 | within noise (p=0.09) |
-| Shortlist trimmed to matched phrases | 2 | 9 | worse |
+| Method | Fixed | Broke | Net change [95% interval] | mid-p |
+|---|---|---|---|---|
+| Judge `@2` (examples drawn from the reference set) | 3 | 1 | +0.025 [−0.024, +0.075] | 0.188 |
+| Judge `@6` (shows the CV line, not only the quote) | 2 | 4 | −0.025 [−0.085, +0.035] | 0.227 |
+| Shortlist from expanded phrasings (`skill-expand@1`) | 10 | 18 | −0.101 [−0.225, +0.028] | 0.068 |
+| Shortlist trimmed to matched phrases | 2 | 9 | −0.089 [−0.166, −0.009] | 0.019 |
 
 - `@2` scored best, but two of its examples were links from the reference set itself. Replacing just those two
-  examples lost those exact links. `@5`, which is `@2` with neutral examples, became the app's judge: its figures
-  aren't inflated by examples taken from what it is measured against.
+  examples lost those exact links. `@5`, which is `@2` with neutral examples, became the app's judge by the user's
+  decision: its figures aren't inflated by examples taken from what it is measured against.
 - Expanding skills into alternative phrasings found the concept-to-tool links that bare names miss, such as a
   general technique to a specific library. But it filled every shortlist, and the judge then found weak `general`
-  links where the user had said "no link". It stays registered for measuring only.
+  links where the user had said "no link": it fixed 10 and broke 18, a net change whose interval runs from a clear
+  loss to a small gain. It stays registered for measuring only.
 
 ([improve-skill-linking](../openspec/changes/archive/2026-10-06-improve-skill-linking/design.md))
 
 ## Rules that came out of this
 
 - A step whose output changes gets a new version, so runs from different versions are never compared as equal.
-- A candidate is adopted only on a `better` verdict, or with the user's explicit agreement and the reason recorded.
-  A candidate that isn't adopted is deleted, so at most one candidate per step sits beside the app's method.
+- A candidate is adopted only by the user's decision. Whoever runs the measurement presents the figures (for
+  linking, the fixed and broken counts, the net change with its interval, the mid-p value and the differing posting
+  skills) and asks; no figure or rule decides, and a large difference doesn't either. The change records the figures,
+  the decision and the user's reasons. A candidate that isn't adopted is deleted, so at most one candidate per step
+  sits beside the app's method.
 - Eval runs are stored apart from app runs (`origin`), so measuring never changes what the app shows.
 - Examples in a prompt never come from the data the prompt is measured against.
 
 ## Known limits
 
 - The labelled set is small (9 development postings when these figures were taken). Most differences between
-  prompts are within noise.
+  prompts are a few marks, which the set can't tell from the variation between runs.
+- The link reference set is small too: at 79 skills, a net change's interval is 0.10–0.16 wide when 4–11 skills
+  differ, and 0.25 wide when 28 do.
 - The link reference set is one person's links, and the shortlist floor is tuned on one profile.
 - The judge is stricter than the user on `general` and `related`.
 - A "no link" answer isn't flagged for review when the profile later gains a candidate.

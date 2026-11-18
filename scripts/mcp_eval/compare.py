@@ -1,23 +1,25 @@
-"""Compare two stages of the MCP measurement (docs/mcp-eval.md): per question, the pass counts of both and a verdict,
-and the set's verdict.
+"""Compare two stages of the MCP measurement (docs/mcp-eval.md): per question, the pass counts of both, the observed
+direction, the difference in pass rate with a 95% interval, and a one-sided mid-p value; no verdict.
 
     venv/bin/python scripts/mcp_eval/compare.py data/mcp-eval/stages/CURRENT data/mcp-eval/stages/CANDIDATE [--json]
     venv/bin/python scripts/mcp_eval/compare.py --conditions data/mcp-eval/stages/A data/mcp-eval/stages/B [--json]
 
-The first stage is the current code, the second the candidate. For each question, a one-sided exact test (Fisher's,
-from the hypergeometric distribution) of the two pass counts gives p for "the candidate passes more often" and for
-"less often": `better` or `worse` at p <= 0.05, `within noise` otherwise. The set is `better` when some question is
-`better` and none `worse`, `worse` when any question is `worse`, `within noise` otherwise. No correction is made for
-testing several questions; the adoption rule (docs/mcp-eval.md, the `mcp-evaluation` spec) compares under both the
-`fixed` and the `none` history conditions, and asks the held-out set and a session batch to agree.
+The first stage is the current code, the second the candidate. For each question: the direction (`more` when the
+second stage's pass rate is higher, `fewer` when lower, `same` when equal), the difference (second minus first) with
+a 95% Newcombe hybrid score interval (from the two Wilson intervals; left out, and said so, when both stages passed or
+both failed every sample), and the mid-p value for the observed direction: with the a + b passes of n + m samples
+shared at random (the hypergeometric distribution), the chance of a split further that way than observed plus half
+the chance of the observed one. The two directions' mid-p values add to 1 (`same`: 0.5 each). Nothing is compared
+with a threshold: the figures are evidence for the user, who decides adoption (the `mcp-evaluation` spec). The set
+line counts the questions in each direction.
 
 Stages of different sets, models, kinds, history conditions or orders are refused (exit 2). Equal code hashes and
-different Ollama versions are warned about. Held-out questions are shown as counts only, as everywhere.
+different Ollama versions are warned about. Held-out questions are shown as counts and the figures computed from them,
+never their transcripts.
 
 `--conditions A B` compares two stages of the same code (equal code hashes), set, model and kind that differ in
-history condition or order: the same tests per question, named for what they measure, `more` (B passes more often),
-`fewer` or `within noise`, with both p-values. It attributes a difference to the history (or order); it gives no set
-verdict and decides nothing.
+history condition or order, with the same figures per question (`more`: B passes more often). It attributes a
+difference to the history (or order) and decides nothing.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from math import comb
+from math import comb, sqrt
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,39 +35,77 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common  # noqa: E402
 import score  # noqa: E402
 
-ALPHA = 0.05
+Z = 1.959963984540054  # the standard normal's 97.5th percentile: 95% intervals
+
+
+def _hypergeometric(a: int, n: int, b: int, m: int) -> dict[int, float]:
+    """With the a + b passes of n + m samples shared at random, the chance of each pass count in the second stage."""
+    passes, total = a + b, n + m
+    lo, hi = max(0, m - (total - passes)), min(passes, m)
+    return {x: comb(passes, x) * comb(total - passes, m - x) / comb(total, m) for x in range(lo, hi + 1)}
 
 
 def p_more(a: int, n: int, b: int, m: int) -> float:
     """One-sided Fisher exact test: the probability, with the a + b passes of n + m samples shared at random, that
     the second stage's m samples hold b passes or more."""
-    passes, total = a + b, n + m
-    hi = min(passes, m)
-    return sum(comb(passes, x) * comb(total - passes, m - x) for x in range(b, hi + 1)) / comb(total, m)
+    return sum(p for x, p in _hypergeometric(a, n, b, m).items() if x >= b)
 
 
 def p_less(a: int, n: int, b: int, m: int) -> float:
     """The same for b passes or fewer."""
-    passes, total = a + b, n + m
-    lo = max(0, m - (total - passes))
-    return sum(comb(passes, x) * comb(total - passes, m - x) for x in range(lo, b + 1)) / comb(total, m)
+    return sum(p for x, p in _hypergeometric(a, n, b, m).items() if x <= b)
 
 
-def verdict(a: int, n: int, b: int, m: int) -> tuple[str, float, float]:
-    more, less = p_more(a, n, b, m), p_less(a, n, b, m)
-    if n and m and more <= ALPHA:
-        return "better", more, less
-    if n and m and less <= ALPHA:
-        return "worse", more, less
-    return "within noise", more, less
+def mid_p_more(a: int, n: int, b: int, m: int) -> float:
+    """One-sided mid-p for "the second stage passes more often": more than b passes, plus half of exactly b."""
+    return p_more(a, n, b, m) - _hypergeometric(a, n, b, m)[b] / 2
 
 
-def set_verdict(verdicts: list[str]) -> str:
-    if "worse" in verdicts:
-        return "worse"
-    if "better" in verdicts:
-        return "better"
-    return "within noise"
+def mid_p_fewer(a: int, n: int, b: int, m: int) -> float:
+    """The same for "fewer": fewer than b passes, plus half of exactly b. mid_p_more + mid_p_fewer == 1."""
+    return p_less(a, n, b, m) - _hypergeometric(a, n, b, m)[b] / 2
+
+
+def wilson(x: int, n: int) -> tuple[float, float]:
+    """The 95% Wilson score interval for x passes of n samples."""
+    p = x / n
+    scale = 1 + Z * Z / n
+    centre = (p + Z * Z / (2 * n)) / scale
+    half = Z * sqrt(p * (1 - p) / n + Z * Z / (4 * n * n)) / scale
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def difference(a: int, n: int, b: int, m: int) -> tuple[float, float, float]:
+    """The second stage's pass rate minus the first's, with its 95% Newcombe hybrid score interval."""
+    p1, p2 = a / n, b / m
+    (l1, u1), (l2, u2) = wilson(a, n), wilson(b, m)
+    d = p2 - p1
+    return d, d - sqrt((p2 - l2) ** 2 + (u1 - p1) ** 2), d + sqrt((u2 - p2) ** 2 + (p1 - l1) ** 2)
+
+
+def direction(a: int, n: int, b: int, m: int) -> str:
+    """`more`, `fewer` or `same`: the second stage's pass rate against the first's (the counts, at equal samples)."""
+    return "more" if b * n > a * m else "fewer" if b * n < a * m else "same"
+
+
+def figures(a: int, n: int, b: int, m: int) -> dict:
+    """One question's figures: direction, difference, interval (None when both stages passed, or both failed, every
+    sample: `all_same` says which), and both directions' mid-p values, to four places."""
+    if not n or not m:
+        return {"direction": None, "difference": None, "interval": None, "all_same": None,
+                "mid_p_more": None, "mid_p_fewer": None}
+    word = direction(a, n, b, m)
+    d, lo, hi = difference(a, n, b, m)
+    all_same = "passed" if a == n and b == m else "failed" if a == b == 0 else None
+    more, fewer = (0.5, 0.5) if word == "same" else (mid_p_more(a, n, b, m), mid_p_fewer(a, n, b, m))
+    return {"direction": word, "difference": round(d, 4),
+            "interval": None if all_same else [round(lo, 4), round(hi, 4)], "all_same": all_same,
+            "mid_p_more": round(more, 4), "mid_p_fewer": round(fewer, 4)}
+
+
+def directions(rows: dict) -> dict[str, int]:
+    """The set's questions in each direction."""
+    return {word: sum(row["direction"] == word for row in rows.values()) for word in ("more", "fewer", "same")}
 
 
 def compare(first: dict, second: dict) -> dict:
@@ -75,13 +115,11 @@ def compare(first: dict, second: dict) -> dict:
     for qid in questions:
         a, n = first["questions"][qid]["passed"], first["questions"][qid]["samples"]
         b, m = second["questions"][qid]["passed"], second["questions"][qid]["samples"]
-        word, more, less = verdict(a, n, b, m)
-        rows[qid] = {"current": [a, n], "candidate": [b, m], "verdict": word, "p_better": more, "p_worse": less}
+        rows[qid] = {"current": [a, n], "candidate": [b, m], **figures(a, n, b, m)}
     only = sorted(set(first["questions"]) ^ set(second["questions"]))
     return {"current": first["stage"], "candidate": second["stage"], "set": first["set"], "kind": first["kind"],
             "model": first["model"], "history": condition(first)["history"], "order": condition(first)["order"],
-            "questions": rows, "not_compared": only,
-            "verdict": set_verdict([row["verdict"] for row in rows.values()])}
+            "questions": rows, "not_compared": only, "directions": directions(rows)}
 
 
 def refusal(first_info: dict, second_info: dict) -> str | None:
@@ -113,19 +151,15 @@ def conditions_refusal(first_info: dict, second_info: dict) -> str | None:
     return None
 
 
-CONDITION_WORDS = {"better": "more", "worse": "fewer", "within noise": "within noise"}
-
-
 def compare_conditions(first: dict, second: dict) -> dict:
-    """Two scored stages of one code version under different conditions: per question both pass counts, both
-    p-values and `more` (the second passes more often), `fewer` or `within noise`; no set verdict."""
+    """Two scored stages of one code version under different conditions: per question both pass counts and the same
+    figures as compare() (`more`: the second passes more often)."""
     result = compare(first, second)
-    rows = {qid: {"first": row["current"], "second": row["candidate"], "verdict": CONDITION_WORDS[row["verdict"]],
-                  "p_more": row["p_better"], "p_fewer": row["p_worse"]}
+    rows = {qid: {"first": row.pop("current"), "second": row.pop("candidate"), **row}
             for qid, row in result["questions"].items()}
     return {"first": first["stage"], "second": second["stage"], "set": first["set"], "kind": first["kind"],
             "model": first["model"], "conditions": [condition(first), condition(second)], "questions": rows,
-            "not_compared": result["not_compared"]}
+            "not_compared": result["not_compared"], "directions": result["directions"]}
 
 
 def condition(scored: dict) -> dict:
@@ -143,15 +177,39 @@ def conditions_report(result: dict, notes: list[str]) -> str:
     lines = [f"== {result['second']} against {result['first']}: {differing(result['conditions'])}; same code, "
              f"{result['kind']}, {result['set']} set, model {result['model']}"]
     lines += [f"warning: {note}" for note in notes]
-    width = max((len(qid) for qid in result["questions"]), default=4)
-    for qid, row in result["questions"].items():
-        (a, n), (b, m) = row["first"], row["second"]
-        lines.append(f"  {qid:<{width}}  {a}/{n} -> {b}/{m}  {row['verdict']:<12}  p(more) {row['p_more']:.4f}  "
-                     f"p(fewer) {row['p_fewer']:.4f}")
+    lines += rows_text(result["questions"], "first", "second")
     if result["not_compared"]:
         lines.append(f"  not in both stages, not compared: {', '.join(result['not_compared'])}")
-    lines.append("  (an attribution: no set verdict)")
+    lines.append(f"  directions: {directions_text(result['directions'])}")
     return "\n".join(lines)
+
+
+def mid_p_text(p: float) -> str:
+    return "< 0.001" if p < 0.0005 else f"{p:.3f}"
+
+
+def row_text(row: dict) -> str:
+    """`more  +0.70 [+0.27, +0.87]  mid-p 0.001`, or what stands in for an interval."""
+    if row["direction"] is None:
+        return "no samples in one stage: no figures"
+    if row["all_same"]:
+        estimate = f"{row['all_same']} every sample in both"
+    else:
+        lo, hi = row["interval"]
+        estimate = f"{row['difference']:+.2f} [{lo:+.2f}, {hi:+.2f}]"
+    mid_p = row["mid_p_fewer"] if row["direction"] == "fewer" else row["mid_p_more"]
+    return f"{row['direction']:<5}  {estimate}  mid-p {mid_p_text(mid_p)}"
+
+
+def rows_text(rows: dict, first: str, second: str) -> list[str]:
+    width = max((len(qid) for qid in rows), default=4)
+    counts = {qid: f"{row[first][0]}/{row[first][1]} -> {row[second][0]}/{row[second][1]}" for qid, row in rows.items()}
+    span = max((len(c) for c in counts.values()), default=0)
+    return [f"  {qid:<{width}}  {counts[qid]:<{span}}  {row_text(row)}" for qid, row in rows.items()]
+
+
+def directions_text(counts: dict[str, int]) -> str:
+    return ", ".join(f"{n} {word}" for word, n in counts.items())
 
 
 def warnings(first_info: dict, second_info: dict, same_code_expected: bool = False) -> list[str]:
@@ -176,14 +234,10 @@ def report(result: dict, notes: list[str]) -> str:
     lines = [f"== {result['current']} (current) against {result['candidate']} (candidate): {result['kind']}, "
              f"{result['set']} set, model {result['model']}, history {result['history']}, order {result['order']}"]
     lines += [f"warning: {note}" for note in notes]
-    width = max((len(qid) for qid in result["questions"]), default=4)
-    for qid, row in result["questions"].items():
-        (a, n), (b, m) = row["current"], row["candidate"]
-        lines.append(f"  {qid:<{width}}  {a}/{n} -> {b}/{m}  {row['verdict']:<12}  p(better) {row['p_better']:.4f}  "
-                     f"p(worse) {row['p_worse']:.4f}")
+    lines += rows_text(result["questions"], "current", "candidate")
     if result["not_compared"]:
         lines.append(f"  not in both stages, not compared: {', '.join(result['not_compared'])}")
-    lines.append(f"  set: {result['verdict']}")
+    lines.append(f"  directions: {directions_text(result['directions'])}")
     return "\n".join(lines)
 
 
@@ -193,8 +247,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("candidate", type=Path,
                         help="the candidate's stage (with --conditions: the second stage, whose condition differs)")
     parser.add_argument("--conditions", action="store_true",
-                        help="compare two conditions (history or order) of one code version: more, fewer or "
-                             "within noise per question, no set verdict")
+                        help="compare two conditions (history or order) of one code version: the same figures per "
+                             "question")
     parser.add_argument("--db", help=f"the demo database (default {common.default_db_url()})")
     parser.add_argument("--json", action="store_true", help="print the comparison as JSON")
     args = parser.parse_args(argv)
