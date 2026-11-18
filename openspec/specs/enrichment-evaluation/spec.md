@@ -204,7 +204,7 @@ When flagging a posting's labelling complete for the first time, the user SHALL 
 The settings page SHALL let the user set the holdout share r, the share of labelled postings the draw aims for in holdout, from 0.1 to 0.9, defaulting to 0.5. It SHALL be stored as user-authored data and survive restarts. Values outside the range SHALL be refused. Changing the share SHALL NOT move any posting: it affects only later draws. The settings page SHALL show the number of labelled postings in each set, and SHALL explain beside the share when to change it:
 - raise it when new dev postings fail in ways already seen, so more labels go where decisions are made;
 - lower it for a while when starting a round of prompt work with fewer than about 8 dev postings;
-- raise it when method comparisons keep coming out within noise, since holdout is then too small to tell methods apart;
+- raise it when method comparisons on holdout keep giving differences too imprecise to tell methods apart, since holdout is then too small;
 - changing it moves no posting, and later draws move towards the new share.
 
 #### Scenario: Default share
